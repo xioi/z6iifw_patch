@@ -152,7 +152,7 @@ static u32 average(u32 total,u32 count)
     return quotient;
 }
 
-static enum histogram_result update_histogram(void)
+__attribute__((used)) static enum histogram_result update_histogram(void)
 {
     if (WORD(SHOOTING_MODE)!=0) return INELIGIBLE;
     u32 page=3;
@@ -264,6 +264,9 @@ static enum histogram_result update_histogram(void)
 static u32 gui_update(u32 a,u32 b,u32 c,u32 d)
 {
     u32 (*original)(u32,u32,u32,u32)=CALL(GUI_UPDATE,u32,u32,u32,u32,u32);
+#if Z62_DISABLE_HISTOGRAM
+    return original(a,b,c,d);
+#else
     if (__atomic_exchange_n(&updating,1,__ATOMIC_ACQUIRE)) return original(a,b,c,d);
     u32 before=WORD(DISPLAY_UPDATE_TICK);
     u32 output_before=WORD(ACTIVE_OUTPUT_BITS);
@@ -339,6 +342,7 @@ static u32 gui_update(u32 a,u32 b,u32 c,u32 d)
 #endif
     __atomic_store_n(&updating,0,__ATOMIC_RELEASE);
     return result;
+#endif
 }
 
 static u32 histogram_horizon_ready(const struct z62_api *api)

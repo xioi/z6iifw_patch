@@ -1286,7 +1286,7 @@ static void histogram_rectangle(struct box box,u32 orientation,u32 color)
     CALL(0x1052bc55u,void,const short *,u32,u32)(rect,color,0);
 }
 
-static void clear_portrait_histogram(u32 orientation)
+__attribute__((used)) static void clear_portrait_histogram(u32 orientation)
 {
     if (!last_plot_orientation || last_plot_orientation==orientation ||
         !histogram_lcd_ready() || display_work_pending()) return;
