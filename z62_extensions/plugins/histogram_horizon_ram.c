@@ -90,6 +90,7 @@ static u32 native_sampling_allowed(void)
 
 static u32 active_photo_output(void)
 {
+    if (WORD(SHOOTING_MODE)!=0) return 0;
     u32 scene=BYTE(DISPLAY_SCENE);
     u32 outputs=WORD(ACTIVE_OUTPUT_BITS)&7u;
     if (scene==LCD_SCENE && (outputs&LCD_OUTPUT)) return LCD_OUTPUT;
@@ -153,6 +154,7 @@ static u32 average(u32 total,u32 count)
 
 static enum histogram_result update_histogram(void)
 {
+    if (WORD(SHOOTING_MODE)!=0) return INELIGIBLE;
     u32 page=3;
 #ifdef Z62_CUSTOM_DISP
     u32 custom=disp_custom_live();

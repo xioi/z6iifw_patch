@@ -443,7 +443,6 @@ static enum placement relocate_live(struct box *box)
         box->x+=8; box->y+=60;
     } else if (x<95 && y>=90 && y<232) { box->x+=3; box->y+=365; }
     else if (x>=655 && y>=120 && y<=185) { box->x-=243; box->y+=366; }
-    else if (x>=680 && x<=704 && y>=238 && y<430) { box->x-=400; box->y+=13; }
     else if (x>=680 && y>=225 && y<440) { box->x-=240; box->y+=13; }
     else if (x<45 && y>=300 && y<=355) { box->x+=4; box->y+=108; }
     else if (x<80 && y>=392 && y<430) { box->x+=380; box->y+=191; }
@@ -1274,7 +1273,8 @@ static u32 histogram_lcd_ready(void)
 
 static u32 portrait_histogram_orientation(void)
 {
-    if (!rotation_enabled() || !portrait_output(WORD(DISPLAY_OUTPUTS)&7u) || current_page()!=LIVE) return 0;
+    if (!rotation_enabled() || WORD(SHOOTING_MODE)!=0 ||
+        !portrait_output(WORD(DISPLAY_OUTPUTS)&7u) || current_page()!=LIVE) return 0;
     u32 orientation=CALL(ORIENTATION_GET,u32,void)();
     return is_portrait(orientation) && histogram_lcd_ready() ? orientation : 0;
 }

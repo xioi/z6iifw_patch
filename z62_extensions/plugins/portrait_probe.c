@@ -21,7 +21,7 @@ typedef z62_u32 u32;
 static u32 portrait_output(u32 outputs)
 {
     if (outputs==1) return 1;
-#ifdef Z62_EVF_PORTRAIT
+#if Z62_EVF_PORTRAIT
     return outputs==4 && BYTE(0xc181dabd)==2;
 #else
     return 0;

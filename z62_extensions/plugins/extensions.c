@@ -2,7 +2,9 @@
 #define Z62_GRID_WITH_PORTRAIT 1
 #define Z62_PORTRAIT_TRACE 0
 #define Z62_PORTRAIT_NO_MENU 1
+#ifndef Z62_EVF_PORTRAIT
 #define Z62_EVF_PORTRAIT 1
+#endif
 #include "movie_limit.h"
 #include "portrait_menu.c"
 

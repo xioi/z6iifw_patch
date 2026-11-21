@@ -9,7 +9,7 @@ Nikon Z 6II C 1.70 的 SD 原生模块加载器，以及录像时长和竖屏拍
 | SD 原生模块加载 | 启动时读取并执行 `Z62APP.BIN` | QEMU 全链路通过 |
 | 后屏竖拍 UI | 拍摄信息、4×3 i 菜单及实时直方图旋转，触控和方向键跟随；密集顶部信息使用双列布局 | 两种方向、i 菜单和 DISP 切换的 QEMU 截图验证通过 |
 | EVF 竖屏拍摄信息 | 旋转拍摄信息，LCD↔EVF 切换时刷新；EVF 的 i 菜单保持原厂方向 | **实验功能，当前 QEMU 无法验证 EVF，需真机确认** |
-| 手动对焦指示 | 已确认实时对焦位置属性 `0x2000`；按日志同步移动整组标尺及清除区域 | 新候选待真机验证；距离显示待实现 |
+| 手动对焦指示 | 已确认实时对焦位置属性 `0x2000`；标尺和清除生命周期继续在原生控件层调查 | 此前坐标补丁已撤回；距离显示待实现 |
 | 解除普通录像 29:59 | 运行时同步 writer、父录制任务和 UI 时长 | 回调安装通过；待真机录像验证 |
 
 当前竖屏默认开启，尚未移植扩展设置菜单和配置文件。实体 MENU、回放界面及 EVF 的 i 菜单保持原厂方向。场景图像本身不会被旋转。顶部信息分行时保持原字号，行起点间隔为 64 像素；[布局截图](docs/images/z62-portrait-rows.png)。
@@ -18,7 +18,7 @@ Nikon Z 6II C 1.70 的 SD 原生模块加载器，以及录像时长和竖屏拍
 
 - `firmware/Z6_2_0170_loader.bin`：从官方 C 1.70 生成的模块加载宿主固件，不含旧的 ROM 录像表补丁。
 - `sd/Z62APP.BIN`：EVF 实验 + 双列 DISP + 解除普通录像时长的组合模块。
-- `sd/lcd-only/Z62APP.BIN`：仅 LCD 竖屏、无 EVF 和双列修改的回退版本。
+- `sd/lcd-only/Z62APP.BIN`：仅 LCD 竖屏、无 EVF 的回退版本，包含视频模式直方图保护。
 - `sd/movie-only/Z62APP.BIN`：仅解除录像时长的回退模块。
 - `sd/diagnostics/Z62APP.BIN`：对焦属性诊断模块，生成 `FOCUSPROP.BIN`，[使用方法](docs/focus-distance.md)。
 - `z62_extensions/`：宿主、模块和构建工具源码。
@@ -33,6 +33,7 @@ Nikon Z 6II C 1.70 的 SD 原生模块加载器，以及录像时长和竖屏拍
 - 正式组合模块在原生方向读取路径下保持正常横屏，且竖屏与录像 Hook 同时安装；对焦诊断模块也已通过加载检查。
 - 临时强制方向模块验证了左右竖屏、竖屏 i 菜单、双列顶部信息及切换到精简 DISP 后的清除；临时模块未进入发布目录。
 - **真机 EVF、方向感应、触控、录像超过 29:59 及长期稳定性仍需验证。** QEMU 不提供可用 EVF 画面，录像编码和硬件计时也不完整。
+- **视频 DISP 历史问题**：旧模块曾在水平仪页面造成假死和粉色像素块。当前主模块与 LCD-only 均已禁止视频模式执行照片直方图采样/绘制，QEMU 连续切换通过；真机仍需回归。不要继续使用旧版。
 - 旧的 ROM 直改表固件会立即报告“录制已中断”，已移除，不应再刷。
 
 ## 使用
@@ -65,10 +66,10 @@ shasum -a 256 firmware/Z6_2_0170_loader.bin sd/Z62APP.BIN \
 
 ```text
 aa5e2e8599f9126e92476c64e7de7c966d662d101e7d9ab19a358d1bb19ceacf  firmware/Z6_2_0170_loader.bin
-29972d384fe42007ba470a5319ac57c47ab4df5f5cab8d477fc200766c6b11b7  sd/Z62APP.BIN
-227e392ef4e4eafa61cde7724636fc15c734ac13aed81ba363ffed9053d77086  sd/lcd-only/Z62APP.BIN
+31a2ba9fbc1fd592b6f220c0b300506e29d173ee04d431123592619e9ccbf3bb  sd/Z62APP.BIN
+97139063f4a67d6843b9c03308f9ae52cd146cf248c6214f7f4751f5298a2eda  sd/lcd-only/Z62APP.BIN
 eeb23e7423797de003c34ccc7a2ae355c17413a48199e445f78cb22ee1fbead7  sd/movie-only/Z62APP.BIN
-2efde860d1b63c967e42a00e8e97339419fa3fb1a3d5614547fa695163158259  sd/diagnostics/Z62APP.BIN
+8f5154eb148bb816299fd8b638668650883f30cb9c9344bcb70edfaecb6c1ebe  sd/diagnostics/Z62APP.BIN
 ```
 
 ## 重新构建
