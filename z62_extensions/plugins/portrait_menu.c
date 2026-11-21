@@ -77,12 +77,24 @@ static void focus_probe_draw(volatile z62_u32 *message,z62_u32 handled);
 #define I_MENU_APP 0xc1821a3cu
 #define I_MENU_STATE 0xc1821998u
 #define APP_SWITCH_STOCK 0x1053fc9fu
+#define I_MENU_UPDATE (I_MENU_APP+0x1cu)
+#define I_MENU_UPDATE_STOCK 0x105c3785u
+#define I_MENU_EVENT 0x105c4c1du
 #define PICTURE_APP 0xc1823b5cu
 #define COLOR_APP 0xc1823db0u
 #define COLOR_DETAIL_APP 0xc1824e5cu
 #define PICTURE_KEY 0x105942b3u
 #define COLOR_KEY 0x105b856fu
 #define COLOR_DETAIL_KEY 0x1065c38du
+#define PICTURE_UPDATE (PICTURE_APP+0x1cu)
+#define PICTURE_UPDATE_STOCK 0x1058f3d1u
+#define COLOR_UPDATE (COLOR_APP+0x1cu)
+#define COLOR_UPDATE_STOCK 0x105b8679u
+#define COLOR_DETAIL_UPDATE (COLOR_DETAIL_APP+0x1cu)
+#define COLOR_DETAIL_UPDATE_STOCK 0x1065c4e7u
+#define PICTURE_EVENT 0x1059445bu
+#define COLOR_EVENT 0x105b8617u
+#define COLOR_DETAIL_EVENT 0x1065c46bu
 #define TOUCH_SLOT 0xc181da2cu
 #define TOUCH_STOCK 0x1054036du
 #define NAV_MODE 0xc1824208u
@@ -108,14 +120,14 @@ enum { LCD_W=720, LCD_H=480, OLD_TOP=280, GRID_TOP=440, CELL_W=120, CELL_H=73,
        FOOTER_Y=GRID_TOP+3*CELL_H+1, FOOTER_SCALE=57344,
        FOOTER_DX=-211, FOOTER_DY=295, STOCK_HINT_LEFT=242,
        DIAL_STOCK_TOP=44, DIAL_TOP=283, DIAL_SHIFT=254,
-       SETTING_SHIFT=235, EXTERNAL_SHIFT=394,
-       HUD_SCALE=41943, WIDTH_SCALE=43691, UNIT_SCALE=65536 };
+       SETTING_SHIFT=235, EXTERNAL_SHIFT=394, SETTING_LEFT=60,
+       HUD_SCALE=41943, WIDTH_SCALE=43691, SETTING_SCALE=52429, UNIT_SCALE=65536 };
 enum page { OTHER, NATIVE_SCREEN, LIVE, GRID, DIAL, SETTING, EXTERNAL_SETTING };
 enum placement { UNMAPPED, NORMAL, FIT_WIDTH, FIT_PAGE, HUD };
 struct box { int x, y, w, h; };
 
 /* 0 means no backdrop yet; 3 is a menu opened in landscape. */
-static u32 layout_orientation;
+static u32 layout_orientation, painted_menu_orientation;
 static u32 external_app;
 static u32 auto_rotate=1;
 #if Z62_PORTRAIT_TRACE
@@ -334,7 +346,7 @@ static u32 portrait_sample(u32 command,u32 orientation,const volatile u32 *sourc
         int y=command==0x1c ? (int)source[7]>>16 : (short)(source[6]>>16);
         int x=command==0x1c ? (int)source[6]>>16 : (short)source[6];
         if (page==DIAL ? y<DIAL_STOCK_TOP || y>=OLD_TOP :
-            child ? y<STOCK_HINT_START || y>=LCD_H :
+            child ? y<0 || y>=LCD_H :
             y>=LCD_H || (y<STOCK_HINT_START-12 &&
             !(orientation==1 && x<LCD_W-FOOTER_Y) &&
             !(orientation==2 && x>=FOOTER_Y))) return 0;
@@ -351,7 +363,7 @@ static u32 portrait_sample(u32 command,u32 orientation,const volatile u32 *sourc
         if (page==DIAL) {
             int bottom=LCD_H-(int)source[1];
             if (!stock_dial(bottom-(int)source[3],bottom)) return 0;
-        } else if ((int)source[1]+(int)source[3]>LCD_H-(STOCK_HINT_START-12)) return 0;
+        } else if (!child && (int)source[1]+(int)source[3]>LCD_H-(STOCK_HINT_START-12)) return 0;
         for (u32 i=0;i<4;++i) geometry[i]=source[i];
         break;
     case 0x34: case 0x37: case 0x38: {
@@ -360,7 +372,7 @@ static u32 portrait_sample(u32 command,u32 orientation,const volatile u32 *sourc
         if (!ram_words(address,0x68/4)) return 0;
         const volatile unsigned short *desc=(const volatile unsigned short *)address;
         int top=LCD_H-desc[0x64/2], bottom=LCD_H-desc[0x60/2];
-        if (page==DIAL ? !stock_dial(top,bottom) : !stock_hint(top,bottom)) return 0;
+        if (page==DIAL ? !stock_dial(top,bottom) : !child && !stock_hint(top,bottom)) return 0;
         geometry[0]=desc[0x5e/2];
         geometry[1]=(u32)top;
         geometry[2]=desc[0x62/2];
@@ -523,8 +535,10 @@ static enum placement relocate_box(struct box *box,enum page page,u32 image)
     if (page==LIVE) return relocate_live(box);
     if (page==SETTING) {
         if (!onscreen(*box,LCD_W,LCD_H)) return 0;
-        scale_box(box,WIDTH_SCALE,UNIT_SCALE,0,SETTING_SHIFT);
-        return FIT_WIDTH;
+        scale_box(box,SETTING_SCALE,UNIT_SCALE,-fixed_product(SETTING_LEFT,SETTING_SCALE),SETTING_SHIFT);
+        if (box->x<0) { box->w+=box->x; box->x=0; }
+        if (box->x+box->w>LCD_H) box->w=LCD_H-box->x;
+        return box->w>0 ? FIT_WIDTH : UNMAPPED;
     }
     if (page==EXTERNAL_SETTING) {
         if (!onscreen(*box,LCD_W,LCD_H)) return 0;
@@ -775,8 +789,8 @@ static u32 render_text(u32 *context,void *options,const int *origin,void *metric
     u32 saved[7];
     for (u32 i=0;i<7;++i) saved[i]=matrix[i];
     /* Use the same scale as the corresponding rectangles and bitmaps. */
-    int sx=hint ? FOOTER_SCALE : place==HUD ? HUD_SCALE :
-           place==FIT_WIDTH || place==FIT_PAGE ? WIDTH_SCALE : UNIT_SCALE;
+    int sx=hint ? FOOTER_SCALE : child_hint ? WIDTH_SCALE : place==HUD ? HUD_SCALE :
+           place==FIT_WIDTH ? SETTING_SCALE : place==FIT_PAGE ? WIDTH_SCALE : UNIT_SCALE;
     int sy=hint ? FOOTER_SCALE : place==HUD ? HUD_SCALE : place==FIT_PAGE ? WIDTH_SCALE : UNIT_SCALE;
 #ifdef Z62_BATTERY_PERCENT
     if (battery) sx=sy=battery_scale;
@@ -911,6 +925,7 @@ static u32 portrait_draw(volatile u32 *message,u32 outputs,u32 orientation)
         dial_orientation=0;
     }
     if (page==OTHER || page==NATIVE_SCREEN || page==LIVE) {
+        painted_menu_orientation=0;
         if (__atomic_load_n(&external_app,__ATOMIC_RELAXED))
             __atomic_store_n(&external_app,0,__ATOMIC_RELEASE);
         if (__atomic_load_n(&layout_orientation,__ATOMIC_RELAXED))
@@ -926,6 +941,14 @@ static u32 portrait_draw(volatile u32 *message,u32 outputs,u32 orientation)
     if (page==SETTING && !layout) {
         layout=is_portrait(orientation) ? orientation : 3;
         __atomic_store_n(&layout_orientation,layout,__ATOMIC_RELEASE);
+    }
+    if ((grid || setting_page(page)) && layout && painted_menu_orientation!=layout) {
+        if (is_portrait(painted_menu_orientation)) {
+            int top=page==SETTING ? SETTING_SHIFT : page==EXTERNAL_SETTING ? EXTERNAL_SHIFT : TITLE_TOP;
+            clear_band((struct box){0,top,LCD_H,LCD_W-top},painted_menu_orientation);
+        }
+        footer_orientation=footer_dirty=dial_orientation=0;
+        painted_menu_orientation=layout;
     }
     if (command==0x34 || command==0x37 || command==0x38) {
         if (grid && !layout) layout=orientation;
@@ -1147,6 +1170,41 @@ static int unscale_pixel(int pixel,int scale)
     return ((pixel+1)*UNIT_SCALE-1)/scale;
 }
 
+static u32 live_touch_point(int u,int v,int *stock_x,int *stock_y)
+{
+    static const short offsets[][2]={
+        {119,-98},{-8,-60},{-3,-365},{243,-366},{240,-13},{-4,-108},
+        {-380,-191},{-10,-242},{240,-154},{-108,-160},{240,-180},{125,-236}
+    };
+    for (u32 row=0;row<2;++row) {
+        int x=u-8+row*LCD_W/2, y=v-8-row*64;
+        if ((unsigned)x>=LCD_W || (unsigned)y>=LCD_H) continue;
+        struct box box={x,y,1,1};
+        if (relocate_live(&box) && box.x==u && box.y==v) {
+            *stock_x=x; *stock_y=y;
+            return 1;
+        }
+    }
+    {
+        struct box box={unscale_pixel(u-10,HUD_SCALE),unscale_pixel(v-8,HUD_SCALE),1,1};
+        if (relocate_live(&box)==HUD && box.x==u && box.y==v) {
+            *stock_x=unscale_pixel(u-10,HUD_SCALE);
+            *stock_y=unscale_pixel(v-8,HUD_SCALE);
+            return 1;
+        }
+    }
+    for (u32 i=0;i<sizeof(offsets)/sizeof(offsets[0]);++i) {
+        int x=u+offsets[i][0], y=v+offsets[i][1];
+        if ((unsigned)x>=LCD_W || (unsigned)y>=LCD_H) continue;
+        struct box box={x,y,1,1};
+        if (relocate_live(&box) && box.x==u && box.y==v) {
+            *stock_x=x; *stock_y=y;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void menu_touch_point(short *point,enum page page,u32 orientation)
 {
     int x=(point[0]*LCD_W+TOUCH_W/2)/TOUCH_W;
@@ -1156,7 +1214,9 @@ static void menu_touch_point(short *point,enum page page,u32 orientation)
     int stock_x=-1, stock_y=-1;
 
     if (u>=0 && u<LCD_H && v>=0 && v<LCD_W) {
-        if (grid_page(page)) {
+        if (page==LIVE) {
+            live_touch_point(u,v,&stock_x,&stock_y);
+        } else if (grid_page(page)) {
             if (v>=GRID_TOP && v<GRID_TOP+3*CELL_H) {
                 int row=(v-GRID_TOP)/CELL_H, col=u/CELL_W;
                 int cell=row*4+col;
@@ -1173,7 +1233,9 @@ static void menu_touch_point(short *point,enum page page,u32 orientation)
             int shift=page==SETTING ? SETTING_SHIFT : EXTERNAL_SHIFT;
             int sy=page==SETTING ? UNIT_SCALE : WIDTH_SCALE;
             if (v>=shift && v<shift+fixed_product(LCD_H,sy)) {
-                stock_x=unscale_pixel(u,WIDTH_SCALE);
+                stock_x=page==SETTING && v-shift<STOCK_HINT_START ?
+                    unscale_pixel(u+fixed_product(SETTING_LEFT,SETTING_SCALE),SETTING_SCALE) :
+                    unscale_pixel(u,WIDTH_SCALE);
                 stock_y=unscale_pixel(v-shift,sy);
             }
         }
@@ -1191,14 +1253,14 @@ static void menu_touch_point(short *point,enum page page,u32 orientation)
 static void portrait_touch(const u32 *event)
 {
     void (*stock)(const u32 *)=CALL(TOUCH_STOCK,void,const u32 *);
-    u32 orientation=menu_orientation();
+    enum page page=current_page();
+    u32 orientation=page==LIVE ? live_orientation : menu_orientation();
     if (!event || !is_portrait(orientation) || (WORD(DISPLAY_OUTPUTS)&7u)!=1) {
         stock(event);
         return;
     }
-    enum page page=current_page();
     u32 kind=((const unsigned char *)event)[9];
-    if ((!grid_page(page) && !setting_page(page)) || !kind || kind>=9) {
+    if ((page!=LIVE && !grid_page(page) && !setting_page(page)) || !kind || kind>=9) {
         stock(event);
         return;
     }
@@ -1275,7 +1337,7 @@ static u32 portrait_histogram_orientation(void)
 {
     if (!rotation_enabled() || WORD(SHOOTING_MODE)!=0 ||
         !portrait_output(WORD(DISPLAY_OUTPUTS)&7u) || current_page()!=LIVE) return 0;
-    u32 orientation=CALL(ORIENTATION_GET,u32,void)();
+    u32 orientation=orientation_read();
     return is_portrait(orientation) && histogram_lcd_ready() ? orientation : 0;
 }
 
@@ -1455,6 +1517,41 @@ static void focus_probe_update(void)
 }
 #endif
 
+static u32 menu_orientation_update(void)
+{
+    enum page page=current_page();
+    if (!rotation_enabled() || (WORD(DISPLAY_OUTPUTS)&7u)!=1 ||
+        (!grid_page(page) && !setting_page(page))) return 0;
+    u32 value=orientation_read(), requested=is_portrait(value) ? value : 3;
+    if (requested==menu_orientation() || CALL(0x106387f5,u32,void)()) return 0;
+    __atomic_store_n(&layout_orientation,requested,__ATOMIC_RELEASE);
+    return 1;
+}
+
+static u32 i_menu_update(u32 a,u32 b,u32 c,u32 d)
+{
+    if (menu_orientation_update()) CALL(I_MENU_EVENT,void,u32,u32)(2,0);
+    return CALL(I_MENU_UPDATE_STOCK,u32,u32,u32,u32,u32)(a,b,c,d);
+}
+
+static u32 picture_update(u32 a,u32 b,u32 c,u32 d)
+{
+    if (menu_orientation_update()) CALL(PICTURE_EVENT,void,u32,u32)(2,0);
+    return CALL(PICTURE_UPDATE_STOCK,u32,u32,u32,u32,u32)(a,b,c,d);
+}
+
+static u32 color_update(u32 a,u32 b,u32 c,u32 d)
+{
+    if (menu_orientation_update()) CALL(COLOR_EVENT,void,u32,u32)(2,0);
+    return CALL(COLOR_UPDATE_STOCK,u32,u32,u32,u32,u32)(a,b,c,d);
+}
+
+static u32 color_detail_update(u32 a,u32 b,u32 c,u32 d)
+{
+    if (menu_orientation_update()) CALL(COLOR_DETAIL_EVENT,void,u32,u32)(2,0);
+    return CALL(COLOR_DETAIL_UPDATE_STOCK,u32,u32,u32,u32,u32)(a,b,c,d);
+}
+
 static u32 live_update(u32 a,u32 b,u32 c,u32 d)
 {
 #ifdef Z62_FOCUS_PROBE
@@ -1478,7 +1575,14 @@ static u32 live_update(u32 a,u32 b,u32 c,u32 d)
         return 0; /* The native parameter app now owns the GUI update. */
     }
 #endif
-    if (current_page()!=LIVE) {
+    enum page page=current_page();
+    u32 orientation=0, output=WORD(DISPLAY_OUTPUTS)&7u;
+    if (rotation_enabled() && portrait_output(output)) {
+        u32 value=orientation_read();
+        if (is_portrait(value)) orientation=value;
+    }
+    if (page!=LIVE) {
+        menu_orientation_update();
         live_orientation=0;
         live_output=0;
         movie_meter_layout(0);
@@ -1488,11 +1592,6 @@ static u32 live_update(u32 a,u32 b,u32 c,u32 d)
         z62_photo_zebra_update();
 #endif
         return result;
-    }
-    u32 orientation=0, output=WORD(DISPLAY_OUTPUTS)&7u;
-    if (rotation_enabled() && portrait_output(output)) {
-        u32 value=CALL(ORIENTATION_GET,u32,void)();
-        if (is_portrait(value)) orientation=value;
     }
     if (orientation!=live_orientation || output!=live_output) {
         if (!CALL(0x106387f5,u32,void)()) {
@@ -1518,8 +1617,14 @@ static u32 portrait_ready(void)
 {
     if (WORD(0x1191284cu)!=SHOOTING_MODE || WORD(APP_ROOTS)!=LIVE_APP ||
         WORD(LIVE_UPDATE)!=LIVE_UPDATE_STOCK || WORD(TOUCH_SLOT)!=TOUCH_STOCK ||
-        WORD(I_MENU_APP)!=APP_SWITCH_STOCK || WORD(PICTURE_APP+0x14)!=PICTURE_KEY ||
-        WORD(COLOR_APP+0x14)!=COLOR_KEY || WORD(COLOR_DETAIL_APP+0x14)!=COLOR_DETAIL_KEY) return 0;
+        WORD(I_MENU_APP)!=APP_SWITCH_STOCK || WORD(I_MENU_APP+0x18)!=I_MENU_EVENT ||
+        WORD(I_MENU_UPDATE)!=I_MENU_UPDATE_STOCK ||
+        WORD(PICTURE_APP+0x14)!=PICTURE_KEY || WORD(PICTURE_APP+0x18)!=PICTURE_EVENT ||
+        WORD(PICTURE_UPDATE)!=PICTURE_UPDATE_STOCK ||
+        WORD(COLOR_APP+0x14)!=COLOR_KEY || WORD(COLOR_APP+0x18)!=COLOR_EVENT ||
+        WORD(COLOR_UPDATE)!=COLOR_UPDATE_STOCK ||
+        WORD(COLOR_DETAIL_APP+0x14)!=COLOR_DETAIL_KEY || WORD(COLOR_DETAIL_APP+0x18)!=COLOR_DETAIL_EVENT ||
+        WORD(COLOR_DETAIL_UPDATE)!=COLOR_DETAIL_UPDATE_STOCK) return 0;
     for (u32 mode=0;mode<NAV_MODES;++mode)
         if (WORD(NAV_SLOT+8*mode)!=WORD(NAV_TABLE+8*mode)) return 0;
     return 1;
@@ -1875,6 +1980,10 @@ static void portrait_install(void)
     WORD(PICTURE_APP+0x14)=(u32)picture_key;
     WORD(COLOR_APP+0x14)=(u32)color_key;
     WORD(COLOR_DETAIL_APP+0x14)=(u32)color_detail_key;
+    WORD(I_MENU_UPDATE)=(u32)i_menu_update;
+    WORD(PICTURE_UPDATE)=(u32)picture_update;
+    WORD(COLOR_UPDATE)=(u32)color_update;
+    WORD(COLOR_DETAIL_UPDATE)=(u32)color_detail_update;
     __asm__ volatile("dmb sy" ::: "memory");
     WORD(I_MENU_APP)=(u32)menu_switch;
 }

@@ -18,6 +18,15 @@ typedef z62_u32 u32;
 #define DRAW_SLOT (GRAPHICS_TASK+0x24u)
 #define DRAW_DISPATCH 0x1054e7a9u
 #define ORIENTATION_GET 0x103d67f3u
+static u32 orientation_read(void)
+{
+#ifdef Z62_PORTRAIT_TEST_ORIENTATION
+    static volatile u32 test_orientation=Z62_PORTRAIT_TEST_ORIENTATION;
+    return test_orientation;
+#else
+    return CALL(ORIENTATION_GET,u32,void)();
+#endif
+}
 static u32 portrait_output(u32 outputs)
 {
     if (outputs==1) return 1;
@@ -138,7 +147,7 @@ static void observe_draw(volatile u32 *message)
     u32 command=message[4];
     if (command>=DRAW_FAMILY && command-DRAW_FAMILY<DRAW_CODES) {
         u32 outputs=WORD(DISPLAY_OUTPUTS)&7u;
-        u32 orientation=portrait_output(outputs) ? CALL(ORIENTATION_GET,u32,void)() : 0;
+        u32 orientation=portrait_output(outputs) ? orientation_read() : 0;
 #if Z62_PORTRAIT_TRACE
         ++command_counts[command-DRAW_FAMILY];
         if (outputs==1 && orientation<5) {
@@ -168,7 +177,7 @@ static void observe_draw(volatile u32 *message)
 
 #if Z62_PORTRAIT_TRACE
 /* File I/O happens only on confirmation of the owned setup row. */
-static u32 export_probe(u32 a,u32 b,u32 c,u32 d)
+__attribute__((used)) static u32 export_probe(u32 a,u32 b,u32 c,u32 d)
 {
     (void)a; (void)b; (void)c; (void)d;
     static _Alignas(64) u32 log[128+3*SAMPLE_LIMIT*SAMPLE_WORDS];
