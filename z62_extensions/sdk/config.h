@@ -1,0 +1,312 @@
+/* SPDX-License-Identifier: MIT */
+#ifndef Z62_CONFIG_H
+#define Z62_CONFIG_H
+#include "z62.h"
+#include "wifi_regions.h"
+#include "playback_filter_config.h"
+
+/* C 1.70 synchronous file-object API, on the SD volume only. */
+#define Z62_CFG_FN(a, result, ...) ((result (*)(__VA_ARGS__))(a))
+#define Z62_CFG_OK 0x043a0080u
+#define Z62_CFG_MAGIC 0x3147525au /* ZRG1 */
+#define Z62_CFG_NO_GRID 0xffffffffu
+#define Z62_DISP_PAGES 4u
+#define Z62_DISP_CHOICES 5u
+#define Z62_DISP_ENABLED 47u /* Four live presets plus the native information page. */
+#define Z62_BATTERY_PERCENT_ON 64u /* Global style, disabled by default and in legacy CFGs. */
+#define Z62_DISP_INFO_GROUPS 8u
+#define Z62_DISP_INFO_ALL 255u
+#define Z62_DISP_INFO_DETAIL 32u
+#define Z62_DISP_INFO_FIELDS (Z62_DISP_INFO_ALL<<6)
+enum { Z62_DISP_INFO=1u, Z62_DISP_GRID=2u, Z62_DISP_HISTOGRAM=4u,
+       Z62_DISP_HORIZON=8u, Z62_DISP_ZEBRA=16u, Z62_DISP_CUSTOM=16u,
+       Z62_DISP_INFORMATION=32u };
+#define Z62_DISP_DEFAULTS {3u,1u,10u,21u}
+#define Z62_AF_SHORTCUT_BUTTONS 5u
+#define Z62_AF_SHORTCUT_NATIVE_TARGETS 10u
+#define Z62_AF_SHORTCUT_WIDE_TARGETS 12u
+#define Z62_CFG_SUBJECT_TRACKING 3u
+#define Z62_AF_SHORTCUT_TRACKING_TARGET (Z62_AF_SHORTCUT_NATIVE_TARGETS+Z62_CFG_SUBJECT_TRACKING)
+#ifdef Z62_SUBJECT_TRACKING
+#define Z62_AF_SHORTCUT_TARGETS Z62_AF_SHORTCUT_TRACKING_TARGET
+#else
+#define Z62_AF_SHORTCUT_TARGETS Z62_AF_SHORTCUT_WIDE_TARGETS
+#endif
+#define Z62_SOUND_CLIP_COUNT 5u
+#define Z62_SOUND_VOLUME_MAX 5u
+#define Z62_WIDE_AF_MIN 5u
+#define Z62_WIDE_AF_MAX 20u
+#define Z62_WIDE_AF_DEFAULT_SIZE (Z62_WIDE_AF_MAX|(Z62_WIDE_AF_MAX<<8))
+#define Z62_WIDE_AF_DEFAULTS {Z62_WIDE_AF_DEFAULT_SIZE|(1u<<16),Z62_WIDE_AF_DEFAULT_SIZE|(2u<<16)}
+#define Z62_PIXEL_SHIFT_DEFAULT (2u<<16) /* Off, 4 shots, 2 s delay, 0 s interval. */
+#define Z62_CONFIG_DEFAULTS {Z62_CFG_NO_GRID,1,0,1,31,Z62_DISP_DEFAULTS,{0,0,0,0,0},Z62_WIFI_REGION_BODY,0,0,1,Z62_SOUND_VOLUME_MAX,0,Z62_WIDE_AF_DEFAULTS,0,Z62_PIXEL_SHIFT_DEFAULT}
+
+enum { Z62_DISP_SHUTTER=1u, Z62_DISP_APERTURE=2u, Z62_DISP_ISO=4u,
+       Z62_DISP_SHOOTING=8u, Z62_DISP_RELEASE=16u,
+       Z62_DISP_FOCUS=32u, Z62_DISP_STATUS=64u, Z62_DISP_FOCAL=128u };
+
+/* Legacy information On means all groups, except Minimal's exposure fields.
+ * Detailed selections retain the original five component bits and CFG size. */
+static inline z62_u32 z62_disp_information(z62_u32 components,z62_u32 preset)
+{
+    if (!(components&Z62_DISP_INFO)) return 0;
+    if (components&Z62_DISP_INFO_DETAIL) return (components>>6)&Z62_DISP_INFO_ALL;
+    return preset==1 ? Z62_DISP_SHUTTER|Z62_DISP_APERTURE|Z62_DISP_ISO : Z62_DISP_INFO_ALL;
+}
+
+static inline z62_u32 z62_disp_components_valid(z62_u32 components)
+{
+    if (components&~(31u|Z62_DISP_INFO_DETAIL|Z62_DISP_INFO_FIELDS)) return 0;
+    if (!(components&Z62_DISP_INFO_DETAIL)) return components<=31;
+    return !!(components&Z62_DISP_INFO)==!!(components&Z62_DISP_INFO_FIELDS);
+}
+
+struct z62_config {
+    z62_u32 grid_style;
+    z62_u32 auto_rotate;
+    z62_u32 photo_zebra_pattern;
+    z62_u32 photo_zebra_threshold;
+    z62_u32 disp_enabled;
+    z62_u32 disp_components[Z62_DISP_PAGES];
+    z62_u32 af_shortcuts[Z62_AF_SHORTCUT_BUTTONS];
+    z62_u32 wifi_region;
+    z62_u32 wifi_80mhz;
+    z62_u32 sound_choice;
+    z62_u32 sound_every_frame;
+    z62_u32 sound_volume;
+    z62_u32 playback_filter;
+    z62_u32 wide_af[2]; /* Width, height and subject mode in successive bytes. */
+    z62_u32 wide_af_selected; /* 0 = native, 1 = C1, 2 = C2, 3 = subject tracking. */
+    z62_u32 pixel_shift; /* Enable, count, delay and interval indices in successive bytes. */
+};
+
+/* The freestanding build lowers copies of the settings record to these helpers. */
+void __aeabi_memcpy4(void *dst,const void *src,z62_u32 size)
+{
+    /* Native memcpy uses an ARM entry point. */
+    Z62_CFG_FN(0x1035d254u,void *,void *,const void *,z62_u32)(dst,src,size);
+}
+
+void __aeabi_memcpy8(void *dst,const void *src,z62_u32 size)
+    __attribute__((alias("__aeabi_memcpy4")));
+
+/* Menu callbacks run on the same task and save the whole record. */
+static struct z62_config z62_config_current=Z62_CONFIG_DEFAULTS;
+static z62_u32 z62_config_pending;
+
+static inline z62_u32 z62_wide_af_valid(z62_u32 value)
+{
+    z62_u32 width=value&255u,height=(value>>8)&255u;
+    return width>=Z62_WIDE_AF_MIN && width<=Z62_WIDE_AF_MAX &&
+           height>=Z62_WIDE_AF_MIN && height<=Z62_WIDE_AF_MAX && (value>>16)<=2;
+}
+
+static inline struct z62_config z62_config_load(void)
+{
+    struct z62_config config=Z62_CONFIG_DEFAULTS;
+    z62_u32 file[10],actual=0;
+    _Alignas(64) z62_u32 data[64];
+    for(z62_u32 i=0;i<10;++i) ((volatile z62_u32 *)file)[i]=0;
+    Z62_CFG_FN(0x104d67a5,void,z62_u32 *,const char *)(file,"B:\\Z62APP.CFG");
+    if(Z62_CFG_FN(0x104d67a9,z62_u32,z62_u32 *,z62_u32,z62_u32)(file,0,0)!=Z62_CFG_OK)
+        return config;
+    z62_u32 size=file[6],result=1;
+    if((size==16 || size==24 || size==32 || size==40 || size==80 || size==120 || size==128 ||
+        size==136 || size==160 || size==168 || size==184 || size==192 || size==200) && file[7]==0) {
+        /* The native reader needs one byte of capacity beyond EOF. */
+        struct { z62_u32 kind; void *buffer; z62_u32 capacity; } request={1,data,size+1};
+        Z62_CFG_FN(0x1034bde9,void,void *,z62_u32)(data,sizeof(data));
+        result=Z62_CFG_FN(0x104d6927,z62_u32,z62_u32 *,void *,z62_u32,z62_u32 *)(file,&request,size+1,&actual);
+        Z62_CFG_FN(0x1034bde9,void,void *,z62_u32)(data,sizeof(data));
+    }
+    z62_u32 closed=Z62_CFG_FN(0x104d6835,z62_u32,z62_u32 *)(file);
+    if(result!=Z62_CFG_OK || closed!=Z62_CFG_OK || actual!=size ||
+       data[0]!=Z62_CFG_MAGIC || data[3]!=~data[2]) return config;
+    if(size==16 && data[1]==1 && data[2]<=4) config.grid_style=data[2];
+    if(size==24 && data[1]==2 && (data[2]<=4 || data[2]==Z62_CFG_NO_GRID) &&
+       data[4]<=1 && data[5]==~data[4])
+        { config.grid_style=data[2]; config.auto_rotate=data[4]; }
+    if(size==32 && data[1]==3 && (data[2]<=4 || data[2]==Z62_CFG_NO_GRID) &&
+       data[4]<=1 && data[5]==~data[4] && data[6]<=1 && data[7]==~data[6])
+        { config.grid_style=data[2]; config.auto_rotate=data[4]; config.photo_zebra_pattern=data[6]; }
+    if(((size==40 && data[1]==4) || (size==80 && data[1]>=5 && data[1]<=9) ||
+        (size==120 && data[1]==10) || (size==128 && (data[1]==11 || data[1]==12)) ||
+        (size==136 && data[1]==13) || (size==160 && data[1]==14) || (size==168 && data[1]==15) ||
+        (size==184 && data[1]==16) || (size==192 && data[1]==17) || (size==200 && data[1]==18)) &&
+       (data[2]<=4 || data[2]==Z62_CFG_NO_GRID) &&
+       data[4]<=1 && data[5]==~data[4] && data[6]<=2 && data[7]==~data[6] &&
+       data[8]<=7 && data[9]==~data[8])
+    {
+        if(size>=80) {
+            z62_u32 maximum=data[1]>=9 ? 127u : data[1]>=6 ? 63u : 31u;
+            z62_u32 pages=data[1]>=6 ? Z62_DISP_ENABLED : 15u;
+            if(data[10]>maximum || !(data[10]&pages) || data[11]!=~data[10]) return config;
+            for(z62_u32 i=0;i<Z62_DISP_PAGES;++i)
+                if((data[1]>=7 ? !z62_disp_components_valid(data[12+2*i]) : data[12+2*i]>31) ||
+                   (data[1]==7 && data[12+2*i]>8191u) ||
+                   data[13+2*i]!=~data[12+2*i]) return config;
+            if(size>=120)
+                for(z62_u32 i=0;i<Z62_AF_SHORTCUT_BUTTONS;++i)
+                    if(data[20+2*i]>(data[1]>=17 ? Z62_AF_SHORTCUT_WIDE_TARGETS : Z62_AF_SHORTCUT_NATIVE_TARGETS) ||
+                       data[21+2*i]!=~data[20+2*i]) return config;
+            if(size>=128 && (data[30]>=(data[1]==11 ? 2u : Z62_WIFI_REGION_COUNT) ||
+                            data[31]!=~data[30])) return config;
+            if(size>=136 && (data[32]>1u || data[33]!=~data[32])) return config;
+            config.disp_enabled=data[10];
+            for(z62_u32 i=0;i<Z62_DISP_PAGES;++i) {
+                z62_u32 components=data[12+2*i];
+                /* v7 grouped focal length under Other information. Preserve
+                 * that choice when splitting it into an independent switch. */
+                if(data[1]==7 && (components&Z62_DISP_INFO_DETAIL) &&
+                   (components&(Z62_DISP_STATUS<<6))) components|=Z62_DISP_FOCAL<<6;
+                config.disp_components[i]=components;
+            }
+            if(size>=120)
+                for(z62_u32 i=0;i<Z62_AF_SHORTCUT_BUTTONS;++i)
+                    config.af_shortcuts[i]=data[20+2*i];
+            if(size>=128) config.wifi_region=data[1]>=12 ? data[30] :
+                data[30] ? Z62_WIFI_REGION_MAINLAND : Z62_WIFI_REGION_BODY;
+            if(size>=136) config.wifi_80mhz=data[32];
+            if(size>=160 && data[34]<=Z62_SOUND_CLIP_COUNT && data[35]==~data[34] &&
+               data[36]<=1 && data[37]==~data[36] &&
+               data[38]>=1 && data[38]<=Z62_SOUND_VOLUME_MAX && data[39]==~data[38]) {
+                config.sound_choice=data[34];
+                config.sound_every_frame=data[36];
+                config.sound_volume=data[38];
+            }
+            if(size>=168 && data[41]==~data[40] && z62_playback_filter_valid(data[40]))
+                config.playback_filter=data[40];
+            z62_u32 selected=size>=192 && data[47]==~data[46] ? data[46] : 0;
+#ifdef Z62_SUBJECT_TRACKING
+            /* Low two bits select the AF mode. The next five mark tracking
+             * shortcuts whose legacy slots are zero. Older readers can
+             * still read the rest of the v17 record. */
+            if(selected<(4u<<Z62_AF_SHORTCUT_BUTTONS)) {
+                for(z62_u32 i=0;i<Z62_AF_SHORTCUT_BUTTONS;++i)
+                    if((selected&(4u<<i)) && !config.af_shortcuts[i])
+                        config.af_shortcuts[i]=Z62_AF_SHORTCUT_TRACKING_TARGET;
+                selected&=3u;
+            }
+            if(selected==Z62_CFG_SUBJECT_TRACKING) config.wide_af_selected=selected;
+#endif
+            if(size>=200 && data[49]==~data[48] && (data[48]&255u)<=1 &&
+               ((data[48]>>8)&255u)<=3 && ((data[48]>>16)&255u)<=5 && (data[48]>>24)<=6)
+                config.pixel_shift=data[48];
+            if(size>=184)
+                for(z62_u32 i=0;i<2;++i) {
+                    if(data[43+2*i]!=~data[42+2*i] || !z62_wide_af_valid(data[42+2*i])) continue;
+                    config.wide_af[i]=data[42+2*i];
+                    if(selected==i+1) config.wide_af_selected=selected;
+                }
+        }
+        config.grid_style=data[2]; config.auto_rotate=data[4];
+        config.photo_zebra_pattern=data[6]; config.photo_zebra_threshold=data[8];
+    }
+    return config;
+}
+
+static inline z62_u32 z62_config_save(struct z62_config config)
+{
+    z62_u32 same=1;
+    for(z62_u32 i=0;i<Z62_DISP_PAGES;++i)
+        if(config.disp_components[i]!=z62_config_current.disp_components[i]) same=0;
+    for(z62_u32 i=0;i<Z62_AF_SHORTCUT_BUTTONS;++i)
+        if(config.af_shortcuts[i]!=z62_config_current.af_shortcuts[i]) same=0;
+    if(!z62_config_pending && same && config.disp_enabled==z62_config_current.disp_enabled &&
+       config.grid_style==z62_config_current.grid_style &&
+       config.auto_rotate==z62_config_current.auto_rotate &&
+       config.wifi_region==z62_config_current.wifi_region &&
+       config.wifi_80mhz==z62_config_current.wifi_80mhz &&
+       config.sound_choice==z62_config_current.sound_choice &&
+       config.sound_every_frame==z62_config_current.sound_every_frame &&
+       config.sound_volume==z62_config_current.sound_volume &&
+       config.playback_filter==z62_config_current.playback_filter &&
+       config.wide_af[0]==z62_config_current.wide_af[0] &&
+       config.wide_af[1]==z62_config_current.wide_af[1] &&
+       config.wide_af_selected==z62_config_current.wide_af_selected &&
+       config.pixel_shift==z62_config_current.pixel_shift &&
+       config.photo_zebra_pattern==z62_config_current.photo_zebra_pattern &&
+       config.photo_zebra_threshold==z62_config_current.photo_zebra_threshold) return Z62_CFG_OK;
+    z62_config_current=config;
+    z62_config_pending=1;
+    /* Keep writing v1 when its grid-only record can represent the settings. */
+    static const z62_u32 defaults[Z62_DISP_PAGES]=Z62_DISP_DEFAULTS;
+    z62_u32 custom=config.disp_enabled!=31,detail=0,af=0;
+    for(z62_u32 i=0;i<Z62_DISP_PAGES;++i) {
+        if(config.disp_components[i]!=defaults[i]) custom=1;
+        if(config.disp_components[i]&Z62_DISP_INFO_DETAIL) detail=1;
+    }
+    z62_u32 wide_shortcut=0;
+    for(z62_u32 i=0;i<Z62_AF_SHORTCUT_BUTTONS;++i) {
+        if(config.af_shortcuts[i]) af=1;
+        if(config.af_shortcuts[i]>Z62_AF_SHORTCUT_NATIVE_TARGETS) wide_shortcut=1;
+    }
+    z62_u32 sound=config.sound_choice || !config.sound_every_frame || config.sound_volume!=Z62_SOUND_VOLUME_MAX;
+    static const z62_u32 wide_defaults[2]=Z62_WIDE_AF_DEFAULTS;
+    z62_u32 wide=config.wide_af[0]!=wide_defaults[0] || config.wide_af[1]!=wide_defaults[1];
+    z62_u32 version=config.pixel_shift!=Z62_PIXEL_SHIFT_DEFAULT ? 18 :
+                    config.wide_af_selected || wide_shortcut ? 17 : wide ? 16 : config.playback_filter ? 15 : sound ? 14 :
+                    config.wifi_80mhz ? 13 : config.wifi_region!=Z62_WIFI_REGION_BODY ? 12 :
+                    af ? 10 : config.disp_enabled&Z62_BATTERY_PERCENT_ON ? 9 :
+                    detail ? 8 : config.disp_enabled&Z62_DISP_INFORMATION ? 6 : custom ? 5 :
+                    config.photo_zebra_pattern || config.photo_zebra_threshold!=1 ? 4 :
+                    config.auto_rotate && config.grid_style!=Z62_CFG_NO_GRID ? 1 : 2;
+    z62_u32 size=version==1 ? 16 : version==2 ? 24 : version==4 ? 40 :
+                 version==18 ? 200 : version==17 ? 192 : version==16 ? 184 : version==15 ? 168 :
+                 version==14 ? 160 : version==13 ? 136 :
+                 version==12 ? 128 : version==10 ? 120 : 80,actual=0;
+    _Alignas(64) z62_u32 data[64];
+    data[0]=Z62_CFG_MAGIC; data[1]=version;
+    data[2]=config.grid_style; data[3]=~config.grid_style;
+    data[4]=config.auto_rotate; data[5]=~config.auto_rotate;
+    data[6]=config.photo_zebra_pattern; data[7]=~config.photo_zebra_pattern;
+    data[8]=config.photo_zebra_threshold; data[9]=~config.photo_zebra_threshold;
+    data[10]=config.disp_enabled; data[11]=~config.disp_enabled;
+    for(z62_u32 i=0;i<Z62_DISP_PAGES;++i) {
+        data[12+2*i]=config.disp_components[i];
+        data[13+2*i]=~config.disp_components[i];
+    }
+    data[46]=config.wide_af_selected;
+    for(z62_u32 i=0;i<Z62_AF_SHORTCUT_BUTTONS;++i) {
+        z62_u32 target=config.af_shortcuts[i];
+#ifdef Z62_SUBJECT_TRACKING
+        if(target==Z62_AF_SHORTCUT_TRACKING_TARGET) {
+            data[46]|=4u<<i;
+            target=0;
+        }
+#endif
+        data[20+2*i]=target;
+        data[21+2*i]=~target;
+    }
+    data[30]=config.wifi_region;
+    data[31]=~config.wifi_region;
+    data[32]=config.wifi_80mhz;
+    data[33]=~config.wifi_80mhz;
+    data[34]=config.sound_choice;
+    data[35]=~config.sound_choice;
+    data[36]=config.sound_every_frame;
+    data[37]=~config.sound_every_frame;
+    data[38]=config.sound_volume;
+    data[39]=~config.sound_volume;
+    data[40]=config.playback_filter;
+    data[41]=~config.playback_filter;
+    for(z62_u32 i=0;i<2;++i) {
+        data[42+2*i]=config.wide_af[i];
+        data[43+2*i]=~data[42+2*i];
+    }
+    data[47]=~data[46];
+    data[48]=config.pixel_shift;
+    data[49]=~data[48];
+    struct { z62_u32 kind; void *buffer; z62_u32 capacity; } request={1,data,size};
+    int opened=Z62_CFG_FN(0x105c1897,int,const char *,z62_u32)("B:\\Z62APP.CFG",0);
+    if(opened<0) return (z62_u32)opened;
+    Z62_CFG_FN(0x1034bdad,void,void *,z62_u32)(data,sizeof(data));
+    z62_u32 result=Z62_CFG_FN(0x105c17e5,z62_u32,int,void *,z62_u32,z62_u32 *)(opened,&request,size,&actual);
+    z62_u32 closed=Z62_CFG_FN(0x105c1749,z62_u32,int)(opened);
+    if(result) return result;
+    if(closed) return closed;
+    if(actual!=size) return 1;
+    z62_config_pending=0;
+    return Z62_CFG_OK;
+}
+#endif

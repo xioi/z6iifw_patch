@@ -1,0 +1,20 @@
+# Stock firmware and generated update packages
+/firmware/
+*.bin
+*.dec
+
+# Generated native SD modules and diagnostic logs
+/sd/
+/FOCUSPROP.BIN
+
+# Build products
+artifacts/
+__pycache__/
+*.pyc
+
+# Recovered keys and signature material
+key.json
+sig*.json
+
+# macOS metadata
+.DS_Store
