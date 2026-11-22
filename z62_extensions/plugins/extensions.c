@@ -9,11 +9,17 @@
 #ifndef Z62_WITH_PORTRAIT
 #define Z62_WITH_PORTRAIT 1
 #endif
+#ifndef Z62_WITH_MOVIE_ROTATION
+#define Z62_WITH_MOVIE_ROTATION 0
+#endif
 #ifndef Z62_EVF_PORTRAIT
 #define Z62_EVF_PORTRAIT Z62_WITH_PORTRAIT
 #endif
 #if Z62_WITH_MOVIE
 #include "movie_limit.h"
+#endif
+#if Z62_WITH_MOVIE_ROTATION
+#include "movie_rotation.h"
 #endif
 #if Z62_WITH_PORTRAIT
 #include "portrait_menu.c"
@@ -25,6 +31,9 @@ z62_u32 z62_main(const struct z62_api *api)
 #if Z62_WITH_MOVIE
     if (!movie_limit_ready()) return 2;
 #endif
+#if Z62_WITH_MOVIE_ROTATION
+    if (!movie_rot_ready()) return 4;
+#endif
 #if Z62_WITH_PORTRAIT
     if (!histogram_horizon_ready(api)) return 3;
     z62_u32 result=portrait_init(api);
@@ -32,6 +41,9 @@ z62_u32 z62_main(const struct z62_api *api)
 #endif
 #if Z62_WITH_MOVIE
     movie_limit_install();
+#endif
+#if Z62_WITH_MOVIE_ROTATION
+    movie_rot_install();
 #endif
     return 0;
 }

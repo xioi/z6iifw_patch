@@ -40,4 +40,4 @@ python3 tools/parse_focusprop.py /path/to/FOCUSPROP.BIN
 
 诊断模块在初始化后以及检测到属性变化并稳定约 8 次 GUI 更新时写入日志。旧版属性日志为 1056 字节；包含绘制记录的新日志为 5152 字节，解析器同时支持两者。日志不包含照片或个人数据。
 
-完成后，删除卡根目录的诊断模块并恢复正式配置。可复制发布包中的 `sd/Z62APP.BIN`，或运行 `python3 z62_extensions/tools/build.py --portrait --evf --movie --force` 重新生成默认组合；替换后完整断电重开。
+完成后，删除卡根目录的诊断模块并恢复正式配置。可复制发布包中的 `sd/Z62APP.BIN`，或运行 `python3 z62_extensions/tools/build.py --portrait --evf --movie --video-rotation --force` 重新生成默认组合；替换后完整断电重开。

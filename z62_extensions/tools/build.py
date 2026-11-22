@@ -19,6 +19,8 @@ def main():
                         help='enable the experimental EVF portrait path; implies --portrait')
     parser.add_argument('--movie', action='store_true',
                         help='enable the experimental normal-movie duration extension')
+    parser.add_argument('--video-rotation', action='store_true',
+                        help='write the latched camera orientation into MOV/MP4 track metadata')
     parser.add_argument('--focus-probe', action='store_true',
                         help='enable focus diagnostics; implies --portrait')
     parser.add_argument('--output', type=Path, default=Path('artifacts/Z62APP.BIN'),
@@ -27,14 +29,16 @@ def main():
                         help='replace the previous module and configuration manifest')
     args = parser.parse_args()
 
-    if not (args.portrait or args.evf or args.movie or args.focus_probe):
-        parser.error('select at least one feature: --portrait, --evf, --movie or --focus-probe')
+    if not (args.portrait or args.evf or args.movie or args.video_rotation or args.focus_probe):
+        parser.error('select at least one feature: --portrait, --evf, --movie, --video-rotation or --focus-probe')
 
     portrait = args.portrait or args.evf or args.focus_probe
     configuration = dict(portrait=portrait, evf=args.evf, movie=args.movie,
+                         video_rotation=args.video_rotation,
                          focus_probe=args.focus_probe, histogram=False)
     defines = [f'Z62_WITH_PORTRAIT={int(portrait)}',
                f'Z62_WITH_MOVIE={int(args.movie)}',
+               f'Z62_WITH_MOVIE_ROTATION={int(args.video_rotation)}',
                f'Z62_EVF_PORTRAIT={int(args.evf)}']
     if args.focus_probe:
         defines.append('Z62_FOCUS_PROBE=1')

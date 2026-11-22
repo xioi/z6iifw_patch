@@ -6,7 +6,7 @@
 
 | 仓库 | 本项目用到了什么 | 可用性与限制 |
 |------|------------------|--------------|
-| [JKWTCN/z7ii-extensions](https://github.com/JKWTCN/z7ii-extensions) | SD 原生模块加载器、模块容器、录像时长运行时方案、竖屏 UI 源码，是本次移植的主要基础 | **Z7II C 1.70 可直接参考其发布包；Z6II 不能直接使用。** 两机型的代码和 RAM 地址不同，需要逐项映射。本项目的 Z6II 移植位于 `z62_extensions/`。 |
+| [JKWTCN/z7ii-extensions](https://github.com/JKWTCN/z7ii-extensions) | SD 原生模块加载器、模块容器、录像时长运行时方案、竖屏 UI 和视频方向元数据，是本次移植的主要基础 | **Z7II C 1.70 可直接参考其发布包；Z6II 不能直接使用。** 两机型的代码和 RAM 地址不同，需要逐项映射。本项目的 Z6II 移植位于 `z62_extensions/`。 |
 | [abaeyens/qemu-expeed](https://github.com/abaeyens/qemu-expeed) | 实际执行 Z6II C 1.70 固件，验证加载器、读卡、模块初始化、回调安装，并截取左右竖屏和 i 菜单画面 | **当前最贴近本项目目标的上游模拟器。** 上游快速入门以 Linux/Docker 为主，本地另有 macOS 构建适配。能显示取景和菜单，但视频编码、硬件计时、完整传感器/镜头行为并不完整，不能代替真机验收。 |
 
 如果朋友只想理解当前成果，优先看这两个仓库，再看本项目的 `docs/research-notes.md`。
@@ -42,7 +42,7 @@
 以下提交号用于说明本项目当时参考的源码快照，不代表上游最新状态；部分本地工作树另有适配或实验修改。
 
 ```text
-JKWTCN/z7ii-extensions       9ddc447789cf
+JKWTCN/z7ii-extensions       9ddc447789cf（本地基线）；e507523a8bc0（视频方向参考）
 abaeyens/qemu-expeed         0d8476d245f9
 simeonpilgrim/nikon-firmware-tools  89ad7354b6d7
 XinmiaoZhao/NikonFirmwarePatch      cd1e46332c5e

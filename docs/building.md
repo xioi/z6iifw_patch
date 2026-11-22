@@ -70,16 +70,17 @@ llvm-nm --version
 | `--portrait` | LCD 拍摄信息、触控和已适配菜单的竖屏路径 | 无 |
 | `--evf` | 实验性 EVF 竖屏拍摄信息 | 自动启用 `--portrait` |
 | `--movie` | 实验性普通录像时长扩展 | 无，可独立构建 |
+| `--video-rotation` | 普通内录 MOV/MP4 开档锁姿并写入视频轨方向矩阵 | 无，可独立构建 |
 | `--focus-probe` | 对焦属性和原生绘制诊断，生成 `FOCUSPROP.BIN` | 自动启用 `--portrait` |
 | `--output PATH` | 指定模块输出路径 | 默认 `artifacts/Z62APP.BIN` |
 | `--force` | 替换旧模块及其配置清单 | 切换配置时显式指定 |
 
-至少选择一个功能参数。`--evf` 或 `--focus-probe` 自动包含竖屏依赖，但不会自动包含录像功能。旧版自制直方图/水平仪已确认不兼容，不提供构建开关。
+至少选择一个功能参数。`--evf` 或 `--focus-probe` 自动包含竖屏依赖，但不会自动包含录像功能。`--video-rotation` 独立于 `--movie` 和 `--portrait`，只负责视频文件方向元数据。旧版自制直方图/水平仪已确认不兼容，不提供构建开关。
 
 ### 默认发布组合
 
 ```sh
-python z62_extensions/tools/build.py --portrait --evf --movie
+python z62_extensions/tools/build.py --portrait --evf --movie --video-rotation
 ```
 
 默认生成：
@@ -105,8 +106,11 @@ python z62_extensions/tools/build.py --portrait --force
 # LCD + EVF 竖屏，不含录像
 python z62_extensions/tools/build.py --evf --force
 
-# 仅录像
+# 仅录像时长扩展
 python z62_extensions/tools/build.py --movie --force
+
+# 仅视频方向元数据
+python z62_extensions/tools/build.py --video-rotation --force
 
 # 对焦诊断，自动包含 LCD 竖屏，不含 EVF 和录像
 python z62_extensions/tools/build.py --focus-probe --force
@@ -197,7 +201,7 @@ shasum -a 256 \
   artifacts/Z62APP.BIN
 ```
 
-README 列出了加载器和默认 `--portrait --evf --movie` 组合的真机候选校验值。使用相同源码和工具链时，默认配置应得到相同哈希。其他组合应记录自己的哈希，不要复制默认配置的哈希或真机结论。
+README 列出了加载器和默认 `--portrait --evf --movie --video-rotation` 组合的当前候选校验值。使用相同源码和工具链时，默认配置应得到相同哈希；含方向默认模块目前只有构建、QEMU 和 ARM 验证。旧无方向组合 `--portrait --evf --movie` 才对应已真机测试的旧模块。其他组合应记录自己的哈希，不要复制默认配置的哈希或真机结论。
 
 至少确认：
 
@@ -250,14 +254,14 @@ shasum -a 256 "artifacts/z62fw_patch-$VERSION.zip" \
 2. 上传 `z62fw_patch-$VERSION.zip` 及其 `.sha256`，不要只依赖自动 Source code 附件。
 3. 在 Release Notes 中写明模块构建参数，并附上对应 `.json` 清单。
 4. 链接 README 的已知问题，列出工具链版本、QEMU 范围和真机测试范围。
-5. 未验证的 EVF、录像超过 29:59、其他参数组合和长期稳定性不得标为已完成。
+5. 未验证的 EVF、录像超过 29:59、Z6II 真机视频方向文件、其他参数组合和长期稳定性不得标为已完成。
 6. 不上传官方固件、`key.json`、`sig*.json`、解密后的原厂模块或包含这些材料的构建目录。
 
 ## 7. 常见问题
 
 | 错误 | 原因与处理 |
 | --- | --- |
-| `select at least one feature` | 没有选功能；添加 `--portrait`、`--evf`、`--movie` 或 `--focus-probe`。 |
+| `select at least one feature` | 没有选功能；添加 `--portrait`、`--evf`、`--movie`、`--video-rotation` 或 `--focus-probe`。 |
 | `ModuleNotFoundError: No module named 'numpy'` | 构建升级包前尚未激活虚拟环境或安装 NumPy；仅构建 SD 模块不需要 NumPy。 |
 | `Missing build tool: ...` | 工具未安装或不在 `PATH`；macOS 检查 `export PATH="$PATH:$(brew --prefix llvm)/bin"`，并确认 `clang` 仍是已验证的系统版本。 |
 | `-Wunterminated-string-initialization` 被 `-Werror` 提升为错误 | Homebrew Clang 23 与当前固定宽度字符串数组的已知兼容性问题；改用已验证的 Apple Clang 17，不要通过扩大数组来改变数据布局。 |
@@ -276,6 +280,7 @@ shasum -a 256 "artifacts/z62fw_patch-$VERSION.zip" \
 - 照片/视频模式、各 DISP 页面、i 根菜单和二级菜单；
 - 参数调整页、曝光补偿、ISO、放大及 LCD/EVF 切换；
 - 短录像和正常停止，再在具备散热与存储条件时测试长录像；
+- 启用 `--video-rotation` 时，分别录制横屏和竖屏的短 MOV、MP4，在电脑上检查显示矩阵、实际播放方向及分段文件的方向；
 - 对焦诊断结束后重新构建正式配置，不要继续把诊断模块留在卡上。
 
 任何真机失败都应保留构建参数、模块哈希、操作步骤和恢复结果。QEMU 成功或模块返回 0 不能替代这些检查，一个配置通过也不能推导其他组合全部通过。

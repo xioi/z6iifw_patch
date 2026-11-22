@@ -14,10 +14,11 @@
 | 功能 | 当前实现 | 验证状态 |
 | --- | --- | --- |
 | SD 原生模块加载 | 启动后读取并执行 `Z62APP.BIN`，支持模块校验、重定位和缓存同步 | QEMU 启动、读卡、加载及回调安装通过 |
-| 参数化组合构建 | 通过构建参数选择竖屏、EVF、录像和对焦诊断，只生成一个模块 | 默认组合与现有真机候选二进制一致 |
+| 参数化组合构建 | 通过构建参数选择竖屏、EVF、录像时长、视频方向和对焦诊断，只生成一个模块 | 旧默认组合保持二进制兼容；完整组合 QEMU 加载通过 |
 | 后屏竖拍 UI | 旋转拍摄信息和 4×3 i 菜单，同步根界面触控热区，适配部分二级设置页和菜单内方向切换 | QEMU 通过；真机仍有下述已知问题 |
 | EVF 竖屏拍摄信息 | 实验性旋转 EVF 拍摄信息，处理 LCD/EVF 切换 | QEMU 无法验证 EVF；需真机确认 |
 | 普通录像时长扩展 | 运行时同步 writer、父录制任务和 UI 时长状态 | 回调安装通过；尚未确认真机可稳定超过 29:59 |
+| 视频方向元数据 | 普通内录 MOV/MP4 开档锁定姿态，分段重新读取，写入视频轨显示矩阵 | QEMU 重定位和 ARM 回调通过；Z6II 真机视频文件待验证 |
 | 手动对焦诊断 | 读取实时对焦位置属性 `0x2000`，记录原生绘制数据 | 已确认属性随对焦环变化；距离显示和标尺修正尚未完成 |
 
 当前模块**不包含**旧版自制直方图/水平仪叠加；该实现曾在照片和视频页面引起花屏、假死与快门禁用，现已完全停用，原生 DISP 和水平仪交还相机处理。
@@ -34,7 +35,7 @@ QEMU 中的后屏竖拍信息布局如下，场景图像本身保持原方向：
 | --- | --- |
 | `firmware/Z6_2_0170_loader.bin` | 模块加载器升级固件，只需安装一次 |
 | `firmware/Z6_2_0170_loader.bin.json` | 加载器构建、原包校验及回读验证报告 |
-| `sd/Z62APP.BIN` | 默认发布配置：LCD 竖屏、EVF 实验和普通录像时长扩展 |
+| `sd/Z62APP.BIN` | 默认发布配置：LCD 竖屏、EVF 实验、录像时长扩展和视频方向元数据 |
 | `sd/Z62APP.BIN.json` | 模块配置、编译定义、哈希及完整构建报告 |
 | `SHA256SUMS.txt` | 加载器和模块的 SHA-256 校验值 |
 
@@ -76,9 +77,24 @@ QEMU 中的后屏竖拍信息布局如下，场景图像本身保持原方向：
 - 卡容量、文件数量、电池、过热保护仍然有效；预计可录时间不等于保证录制时间。
 - 旧的 ROM 直改录像表固件会立即报告「录制已中断」，已移除，不应再刷。
 
+## 视频方向元数据
+
+`--video-rotation` 可独立使用，不依赖竖屏 UI 或录像时长扩展。普通内录 MOV/MP4 在每个文件开档时锁定机身姿态；录制中转动机身不会改变当前文件，原厂分段打开新文件时会重新读取姿态。该功能只修改视频轨的显示矩阵，不重编码或旋转实际像素。
+
+机内视频回放仍使用原厂横向显示，电脑播放器也必须支持视频轨显示矩阵。真机测试应分别录制横屏和竖屏的短 MOV、MP4，在电脑上检查实际播放方向，并可用 FFprobe 查看旋转元数据：
+
+```sh
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream_side_data=rotation \
+  -of default=noprint_wrappers=1 /path/to/video.MOV
+```
+
+Z7II 上游实现已有真机样片验证；Z6II 移植目前只完成构建、QEMU 和 ARM 回调验证，不能据此宣称真机文件已经通过。
+
 ## 回退与恢复
 
 - **需要关闭 EVF 实验路径**：用 `--portrait --movie` 重新构建 LCD 竖屏＋录像配置。
+- **只需要关闭视频方向写入**：保留其他参数并移除 `--video-rotation`，例如 `--portrait --evf --movie`。
 - **只需要录像实验功能**：用 `--movie` 重新构建。
 - **停用全部扩展模块**：删除 SD 卡根目录的 `Z62APP.BIN`，完整断电后重开；加载器仍在，但不会加载扩展。
 - **恢复官方固件**：刷回尼康官方 Z6II C 1.70 升级包。官方固件需要自行获取，本项目不附带原厂固件。
@@ -87,11 +103,11 @@ QEMU 中的后屏竖拍信息布局如下，场景图像本身保持原方向：
 
 ## 当前候选版校验值
 
-默认发布参数 `--portrait --evf --movie` 生成的模块与现有真机组合候选一致。以下校验值只覆盖加载器和这一默认配置；其他参数组合必须记录自己的清单、哈希和测试结果：
+默认发布参数 `--portrait --evf --movie --video-rotation` 生成当前候选。旧无方向组合（`--portrait --evf --movie`）仍生成已真机测试的 `cedba023…2942`；当前含方向默认模块只完成构建、QEMU 和 ARM 验证，尚未确认真机视频文件：
 
 ```text
 aa5e2e8599f9126e92476c64e7de7c966d662d101e7d9ab19a358d1bb19ceacf  firmware/Z6_2_0170_loader.bin
-cedba0235aa94153be215d0c6d3aa008dc8d8b30cbc6f6ce7f9c8dfe6239421b  sd/Z62APP.BIN
+2c7ccb30c80226cd4940cd32124f74a51f21e875616167316d1c1ce9bf3da693  sd/Z62APP.BIN
 ```
 
 macOS 可在发布包根目录运行：
@@ -107,7 +123,7 @@ Linux 使用 `sha256sum -c SHA256SUMS.txt`。
 只构建 SD 模块不需要原厂固件或密钥。以下命令生成默认发布组合：
 
 ```sh
-python3 z62_extensions/tools/build.py --portrait --evf --movie
+python3 z62_extensions/tools/build.py --portrait --evf --movie --video-rotation
 ```
 
 输出为 `artifacts/Z62APP.BIN` 和 `artifacts/Z62APP.BIN.json`。切换到其他配置时，明确使用 `--force` 替换旧输出，例如：
@@ -116,8 +132,11 @@ python3 z62_extensions/tools/build.py --portrait --evf --movie
 # LCD 竖屏 + 录像，不含 EVF
 python3 z62_extensions/tools/build.py --portrait --movie --force
 
-# 仅录像
+# 仅录像时长扩展
 python3 z62_extensions/tools/build.py --movie --force
+
+# 仅视频方向元数据
+python3 z62_extensions/tools/build.py --video-rotation --force
 
 # 对焦诊断，自动包含 LCD 竖屏路径
 python3 z62_extensions/tools/build.py --focus-probe --force
@@ -131,7 +150,9 @@ python3 z62_extensions/tools/build.py --focus-probe --force
 - QEMU 已验证宿主启动、读卡、重定位、模块入口、回调安装，以及部分菜单的双方向旋转和触控坐标映射。
 - QEMU 不提供完整 EVF、录像编码、硬件计时或真实触摸环境，不能据此宣称这些功能已在真机通过。
 - 正式模块曾在 ARM/QEMU 环境返回 `LOADED=11`、模块返回 0；这只证明加载链路，不等同于长期稳定性。
-- 默认组合与旧候选二进制一致，不代表其他参数组合已经过同等真机验证。
+- 视频方向移植已在 QEMU 验证运行时保护、mux 任务安装和 68 个调用/调用桩重定位；完整组合的竖屏、录像与方向 Hook 可同时安装。
+- ARM 仿真已实际调用方向回调：姿态 1/2/3 分别写入 90°/270°/180° 的 36 字节矩阵，姿态 0/4 保持原厂矩阵；尚未验证 Z6II 真机 MOV/MP4 文件。
+- 默认无方向组合与旧候选二进制一致，不代表其他参数组合已经过同等真机验证。
 
 ## 源码结构
 
