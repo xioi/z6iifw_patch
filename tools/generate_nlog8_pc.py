@@ -20,10 +20,21 @@ def nlog_code(reflectance):
     return 150.0 * math.log(reflectance) + 619.0
 
 
+def normalized_output(code, version, gain):
+    if version == 1:
+        return code / 1023.0
+    black = nlog_code(0.0)
+    white = nlog_code(gain)
+    position = min(1.0, max(0.0, (code - black) / (white - black)))
+    return (8.0 + position * (242.0 - 8.0)) / 255.0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--template', type=Path, required=True,
                         help='Horshack_RawLinear.NCP from NikonPictureControlsDev')
+    parser.add_argument('--version', type=int, choices=(1, 2), default=1,
+                        help='v01 preserves N-Log code values; v02 expands 8-bit endpoints')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--report', type=Path)
     parser.add_argument('--force', action='store_true',
@@ -49,17 +60,18 @@ def main():
         linear = raw_value / LUT_MAX
         reflectance = linear * gain
         code = min(1023.0, max(0.0, nlog_code(reflectance)))
-        encoded = round(code / 1023.0 * LUT_MAX)
+        normalized = normalized_output(code, args.version, gain)
+        encoded = round(normalized * LUT_MAX)
         output_lut.append(encoded)
         rows.append(dict(index=index, raw_linear=linear,
-                         nlog_10bit_full=code / 1023.0 * 1023.0,
-                         pc_8bit_full=round(code / 1023.0 * 255.0)))
+                         nlog_10bit_full=code,
+                         pc_8bit_full=round(normalized * 255.0)))
     if any(b < a for a, b in zip(output_lut, output_lut[1:])):
         raise ValueError('Generated LUT is not monotonic')
 
     output = bytearray(source)
-    name = b'NLOG8 v01'
-    output[16:36] = name.ljust(20, b'\0')
+    profile = f'NLOG8 v{args.version:02d}'
+    output[16:36] = profile.encode('ascii').ljust(20, b'\0')
     output[40] = 0x80
     struct.pack_into('>256H', output, lut_offset, *output_lut)
     if len(output) != len(source) or output[:16] != source[:16] or output[-4:] != bytes(4):
@@ -67,13 +79,14 @@ def main():
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(output)
 
-    report = dict(profile='NLOG8 v01', template_sha256=TEMPLATE_SHA256,
+    gray_code = nlog_code(NLOG_GRAY)
+    report = dict(profile=profile, template_sha256=TEMPLATE_SHA256,
                   output_sha256=hashlib.sha256(output).hexdigest(),
                   output_bytes=len(output), lut_entries=LUT_ENTRIES,
                   gray_gain=gain, sharpening=0, saturation=0,
                   gray_reference=dict(reflectance=NLOG_GRAY,
-                                      nlog_10bit_full=nlog_code(NLOG_GRAY),
-                                      pc_8bit_full=round(nlog_code(NLOG_GRAY) / 1023.0 * 255.0)),
+                                      nlog_10bit_full=gray_code,
+                                      pc_8bit_full=round(normalized_output(gray_code, args.version, gain) * 255.0)),
                   color_space='N-Log-like luminance only; not Rec.2020/N-Log certified',
                   samples=[rows[i] for i in (0, 32, 64, 96, 128, 160, 192, 224, 255)])
     text = json.dumps(report, indent=2) + '\n'

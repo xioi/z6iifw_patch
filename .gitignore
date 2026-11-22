@@ -6,6 +6,7 @@
 # Generated native SD modules and diagnostic logs
 /sd/
 /FOCUSPROP.BIN
+/nlog_test/
 
 # Build products
 artifacts/
