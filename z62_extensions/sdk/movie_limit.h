@@ -8,6 +8,7 @@
 #define ML_CALL(a,r,...) ((r (*)(__VA_ARGS__))(a))
 #define ML_STOCK_MS 1799000u
 #define ML_MAX_MS 359999000u
+#define ML_DISPLAY_MAX_MS 59999000u
 #define ML_UI_SLOT 0xc296e254u
 #define ML_UI_NATIVE 0x1045aafbu
 #define ML_RECORD_SLOT 0xc1f5926cu
@@ -83,6 +84,7 @@ static void movie_limit_ui(z62_u32 events)
         if (ML_WORD(config+0xd0)!=ML_STOCK_MS) continue;
         z62_u32 duration=movie_limit_capacity(config);
         if (duration<=ML_STOCK_MS) continue;
+        if (duration>ML_DISPLAY_MAX_MS) duration=ML_DISPLAY_MAX_MS;
         ML_WORD(config+0xd0)=duration;
         changed|=1u<<i;
     }
