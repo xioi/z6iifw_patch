@@ -177,6 +177,109 @@ Hook-only 模块 SHA-256 `d67102a289533c1a5e5d40f0635dfd542449e6725ad5c86e3364a0
 
 实际真机样本经 FFmpeg 解码出图；DNG 像素区与 Z12 解包后的 4,602,072 字节样本 SHA-256 均为 `5475bef098fffdb8d6f0b846b8a3c8b5d03c73fabaa4854f178b788155e4aab3`。macOS `sips` 验证长时间无响应，未计入通过项。转换命令：`python tools/z12_to_dng.py INPUT.Z12 --output OUTPUT.DNG`，多帧会按序号拆成独立 DNG。
 
+## 可复现验证的记录规范
+
+**所有成功或失败的复现流程细节统一记录到本文，不能只留在对话、终端历史或临时输出中。这个记录原则本身也是实验流程的一部分。** 如果专题文档保存了完整步骤，本文须链接到对应章节，避免同一流程出现多份不一致的说明。
+
+每次至少记录：目的、源码提交、完整构建参数、模块 SHA-256、模拟器/真机环境、固件和卡镜像来源、启动及加载确认、逐步操作和等待时间、实际观测值、文件校验/解码结果、失败恢复方法。环境脚本发生变化时同步更新步骤；旧哈希的验证结论不得套用到新产物。还要明确区分“模拟器收到按键”“原厂录像实际启动”“模块完成捕获”和“文件验收通过”，不能由前一阶段推导后一阶段。只有现象而没有完整步骤的结果标记为待复现，不写成已验证结论。
+
+### QEMU 普通录像基线流程
+
+以下步骤来自实际成功的 Hook-only、单帧内存捕获和停止后单帧导出实验，不是推测的启动方法。研究环境位于 `other_researches/qemu-expeed/`，需要先准备该仓库的 `.runtime/qemu-9.1.0/build/qemu-system-arm`、样片、Mtools、ExifTool、FFmpeg 和 FFprobe。以下命令从该仓库根目录执行；`MODULE` 必须指向**当前待测产物**，不能沿用旧文件名。
+
+先退出自己启动且仍在使用 HMP 4444 端口的旧 QEMU 实例，避免把旧进程的状态当作新模块结果：
+
+```sh
+python3 hmp.py quit
+MODULE=/absolute/path/to/Z62APP.BIN bash out/raw12_qemu/start.sh
+```
+
+`start.sh` 使用 `out/raw12_qemu/flash.img` 和 `card.img`，把模块复制为卡根目录的 `Z62APP.BIN`，并设置 `EXPEED_SCENE=out/scene_canoe.bin`、`EXPEED_IIP_PIXELS=1`、`EXPEED_H264=fe`、`EXPEED_H264_ENCODE=1`。HMP 为 `127.0.0.1:4444`，VNC 为 `:2`。更改这些输入时必须同时记录新脚本和环境。
+
+看到 `boot completed` 后，额外等待 **12 秒墙钟时间**，先确认宿主加载状态，再输入按键。以下代码通过运行时指针读取状态，并把模块基址保存为后续 dump 的输入：
+
+```sh
+sleep 12
+python3 - <<'PY'
+import json
+import struct
+from pathlib import Path
+from hmp import hmp
+out = Path('out/raw12_qemu').resolve()
+hmp([f'memsave 0xc18aedb8 8 "{out / "anchor.bin"}"'], settle=1)
+state = struct.unpack('<I', (out / 'anchor.bin').read_bytes()[:4])[0]
+hmp([f'memsave {state:#x} 44 "{out / "loader-state.bin"}"'], settle=1)
+image, status, result = struct.unpack_from('<III', (out / 'loader-state.bin').read_bytes(), 32)
+assert status == 11 and result == 0, (hex(image), status, result)
+(out / 'module-state.json').write_text(json.dumps({
+    'state': hex(state), 'image': hex(image),
+    'status': status, 'module_result': result,
+}, indent=2) + '\n')
+print(hex(state), hex(image), status, result)
+PY
+```
+
+然后按已验证时序操作：`v` 切到视频，等待 5 秒；`r` 开始录像，等待 4 秒；`r` 停止，再等待至少 9 秒让原厂文件任务退出。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
+
+```sh
+python3 - <<'PY'
+import time
+from hmp import hmp
+for key, delay in [('v', 5), ('r', 4), ('r', 9)]:
+    hmp(['sendkey ' + key], settle=1)
+    time.sleep(delay)
+PY
+```
+
+`v` 是照片/视频选择杆，`r` 是录像按钮，不是通用 QEMU 快捷键。若 `raw12_hook_notifications` 和 `raw12_hook_frames` 都保持 0，或没有 `R12Sxxx.BIN`，先检查等待时间、`LOADED=11`、模块返回值和原厂录像是否实际启动；此时不能评价捕获算法。已有一轮过早操作得到全零通知和无状态文件，重新按上述基线启动后才得到有效的分配失败诊断。
+
+读取主核内存必须使用 HMP **`memsave` 虚拟地址**，不能使用 `pmemsave` 代替：当前模型中后者对相关 RAM 返回全零占位。模块各变量偏移从当前 `.BIN.json` 的 `symbols` 获取，基址使用上一步保存的 `image`，不要硬编码旧基址。模块加载状态的 `+32/+36/+40` 分别为 `image/status/module_result`。记录 dump 对应的模块哈希，避免混用旧符号表。
+
+从虚拟卡根目录读取状态的示例：
+
+```sh
+mdir -i out/raw12_qemu/card.img@@4194304 ::
+mcopy -o -i out/raw12_qemu/card.img@@4194304 \
+  ::R12S000.BIN out/raw12_qemu/R12S000.BIN
+python3 - <<'PY'
+import struct
+from pathlib import Path
+v = struct.unpack('<32I', Path('out/raw12_qemu/R12S000.BIN').read_bytes())
+assert v[0] == 0x53323152 and v[1] == 1 and v[30] == (~v[0] & 0xffffffff)
+for i, value in enumerate(v):
+    print(f'{i:02}: {value:#010x} ({value})')
+PY
+```
+
+状态文件编号应取本次新产生的文件，不应直接假定是 `R12S000.BIN`。Z12 还需检查每个帧记录的 magic、大小、序号和像素范围，并用 `tools/z12_to_dng.py` 实际生成和打开 DNG。原厂 MOV 要从 `DCIM` 的实际子目录取出本次新文件，使用 FFprobe 检查流信息后，再由 FFmpeg **完整解码**；以下命令中的路径必须替换为实际文件：
+
+```sh
+mcopy -o -i out/raw12_qemu/card.img@@4194304 \
+  ::DCIM/100NZ6_2/DSC_0001.MOV out/raw12_qemu/check.MOV
+ffprobe -v error -show_entries \
+  stream=codec_name,width,height,pix_fmt,r_frame_rate:format=duration,size \
+  -of json out/raw12_qemu/check.MOV
+ffmpeg -v error -i out/raw12_qemu/check.MOV -f null -
+```
+
+只有新文件、正确捕获状态、帧数据和原厂 MOV 解码均符合要求，才可宣称该次 QEMU 录像实验通过。QEMU 使用静态 NEF 场景且 P 帧模型不完整，仍不替代真机验证。
+
+### 双帧缓冲分配诊断
+
+双帧诊断模块 SHA-256 `ed551450208c31ce6f6412f64366224cbab7df44cbea0bfbc0590039761dcb51` 按上述基线成功启动录像，但没有导出 Z12：池 0 分配返回 0、错误码 `0x2102`，池 1 的单帧分配成功。每帧含 64 字节对齐余量的申请为 3,459,583 字节。这不是帧格式或连续性校验失败，因为尚未执行复制。
+
+停止后写出的 `R12S004.BIN` 保存了 `0x1034c2b7(pool=0)` 和 `0x1034c2d9(pool=0)` 的原始返回值，分别为 `0x22fff0`（2,293,744）和 `0x1e9880`（2,005,120）。这两个统计字段的语义尚未核实，不能直接标为当前可用容量；特别是池 1 的返回值小于一帧申请量，但该次分配实际成功。当前双帧候选仍未通过验收，不能上机。
+
+另一轮把两笔申请都放在池 1（SHA-256 `df9748c07cd5c1d3799ae7030c5b808556a992ca12745a4c592ced263e674bc9`），得到 `R12S005.BIN`：两笔均返回 0，统计返回值为 `0xf62798` 和 `0xf1c060`。这些变化说明不能从单次统计值推断可分配容量，也不能宣称某一个池固定可用。下一项隔离实验是在录像仍有效时有限次重试未成功的分配，只保留已成功指针，并在 `data[25]` 高 16 位记录分配轮数；失败时仍不复制、不导出。
+
+加入最多 100 轮分配重试的 SHA-256 `21c1b25b98ce23655328f7e2f946deb5ee552f675a6cc6d3f89b09bec3b8a3ed` 在第一轮得到两个非空指针，但 `state/captured` 仍为 0。读取实际 BSS 后发现双帧初始化漏掉了 `state=1`，下一循环又回到分配路径，因此这不是捕获阶段的失败。不能把上述有指针但无帧文件的结果记作内存分配失败。
+
+补上等待帧状态转换后的 SHA-256 `035c017384954eaa04eb83b5f8c534ca5ec687aa056657ff2e1487e61196f22e` 按基线流程通过：两个缓冲分别来自池 0/池 1，第一轮分配成功；录像期间得到 `captured=2`、`torn=0`、`rejected=0`、序号 `0x65a/0x65b`。停止后 `R12S007.BIN` 为 `state=2`、`export_attempted=1`、`exported=1`、`export_errors=0`、`dual_error=0`，`data[25]=0x00010000`（一轮分配、零次源帧重试）。`RAW12001.Z12` 为 6,919,136 字节，SHA-256 `ae5180bfff86ab68feb4fa081e7accc1b36c811fc6e57d2570024e8866c8b209`，恰好是 64 字节文件头、两个 16 字节帧头和两个 3,459,520 字节帧载荷。
+
+两个帧载荷的 SHA-256 均为 `66da6079dcee35c6371d6af71cf72d86dbc5e9d58f06b05e3b7f83553361edeb`，与已验证单帧样本一致；各有 2,301,036 个样本、2,445 个不同码值，范围 253–4095、均值 750.930。静态 NEF 场景下两帧内容相同是预期现象，不构成真实运动画面的时间变化证明。两个 DNG 的像素均与对应 Z12 解包样本逐项一致，FFmpeg 实际出图。临时检查脚本最初误用二维数组的 `len(raw)`（行数）而非 `raw.size`（样本总数）导致断言失败；修正后通过，不是 RAW 像素故障。
+
+同次原厂 `DSC_0008.MOV` 为 4.32 秒、1920×1080、25fps、H.264/yuv420p，FFmpeg 完整解码无错误。此结果只证明双帧内存捕获、停止后两帧导出和所测原厂短录可在 QEMU 共存；尚不是连续 RAW 视频，也尚未通过真机。
+
 ## 验证边界
 
 固件打包会执行原包 K8 验证、主模块 CRC、包 CRC、重签、重新解密和目录逐成员比对。QEMU 可验证启动、读卡、模块初始化和回调安装，但其录像编码与真实硬件计时不完整，不能据此宣称真机已突破 29:59。最终仍需真机录像验证。
