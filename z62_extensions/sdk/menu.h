@@ -4,12 +4,12 @@
 #include "z62.h"
 
 /* C 1.70 platform binding for owned rows prepended to the setup menu. */
-#define Z62_SETUP_MENU 0xb1853e64u
+#define Z62_SETUP_MENU 0xc1853e24u
 #ifndef Z62_MENU_SLOT
 #define Z62_MENU_SLOT 255u /* Grid labels use slots 250 through 254. */
 #endif
 #define Z62_MENU_ROW_ID 0x2fffu
-#define Z62_MENU_ROWS 42u
+#define Z62_MENU_ROWS 43u
 #define Z62_MENU_EVENTS 61u
 #ifndef Z62_MENU_EXTRA_ROWS
 #define Z62_MENU_EXTRA_ROWS 2u
@@ -37,11 +37,11 @@ static inline z62_u32 z62_menu_prepare_rows(struct z62_menu_storage *storage,
 {
     volatile z62_u32 *header=(volatile z62_u32 *)Z62_SETUP_MENU;
     const z62_u32 *rows=(const z62_u32 *)0x117d844c;
-    const z62_u32 *maps=(const z62_u32 *)0x11810d08;
-    const z62_u32 *events=(const z62_u32 *)0x1180b848;
+    const z62_u32 *maps=(const z62_u32 *)0x11816ecc;
+    const z62_u32 *events=(const z62_u32 *)maps[Z62_MENU_ROWS-1];
     if(!count || count>Z62_MENU_EXTRA_ROWS || header[3]!=(z62_u32)rows ||
-       header[4]!=(z62_u32)maps || header[5]!=0x8002a ||
-       events[(Z62_MENU_EVENTS-1)*4]!=0x31a) return 1;
+       header[4]!=(z62_u32)maps || header[5]!=0x8002b ||
+       events[(Z62_MENU_EVENTS-1)*4]!=0x31b) return 1;
     for(z62_u32 row=0;row<count;++row)
         if(added[row].label && !*(volatile z62_u32 *)(0xc2028884+(Z62_MENU_SLOT+row)*12+4)) return 1;
     for(z62_u32 row=0;row<Z62_MENU_ROWS;++row) {
@@ -56,11 +56,12 @@ static inline z62_u32 z62_menu_prepare_rows(struct z62_menu_storage *storage,
         storage->rows[row][6]=Z62_MENU_ROW_ID-row;
         for(z62_u32 i=0;i<Z62_MENU_EVENTS;++i) {
             z62_u32 ev=events[i*4], fn=events[i*4+1], pred=events[i*4+2], dest=events[i*4+3];
-            if(ev==0x257 || ev==0x25c || ev==0x270 || ev==0x27d) {
-                fn=(z62_u32)added[row].callback; pred=0; dest=0x430;
+            if(ev==0x257 || ev==0x258 || ev==0x25c || ev==0x25d ||
+               ev==0x270 || ev==0x271 || ev==0x27d || ev==0x27e) {
+                fn=(z62_u32)added[row].callback; pred=0; dest=0x435;
             } else if(fn!=0x1063e0c1 && fn!=0x1063e0cd && fn!=0x1063e0d9 &&
                       fn!=0x1063e0dd && fn!=0x1063e0df && fn!=0x1063e105) {
-                fn=0; pred=0; dest=dest==0x431 ? 0x431 : 0x430;
+                fn=0; pred=0; dest=dest==0x436 ? 0x436 : 0x435;
             }
             storage->events[row][i][0]=ev;
             storage->events[row][i][1]=fn;
@@ -79,7 +80,7 @@ static inline void z62_menu_publish_rows(struct z62_menu_storage *storage,z62_u3
     __asm__ volatile("dmb sy" ::: "memory");
     header[3]=(z62_u32)storage->rows;
     header[4]=(z62_u32)storage->maps;
-    header[5]=0x8002a+count;
+    header[5]=0x8002b+count;
 }
 
 static inline z62_u32 z62_menu_install_rows(struct z62_menu_storage *storage,

@@ -12,6 +12,12 @@
 #ifndef Z62_WITH_MOVIE_ROTATION
 #define Z62_WITH_MOVIE_ROTATION 0
 #endif
+#ifndef Z62_WITH_RAW12
+#define Z62_WITH_RAW12 0
+#endif
+#ifndef Z62_WITH_RAW12_HOOK_ONLY
+#define Z62_WITH_RAW12_HOOK_ONLY 0
+#endif
 #ifndef Z62_EVF_PORTRAIT
 #define Z62_EVF_PORTRAIT Z62_WITH_PORTRAIT
 #endif
@@ -20,6 +26,12 @@
 #endif
 #if Z62_WITH_MOVIE_ROTATION
 #include "movie_rotation.h"
+#endif
+#if Z62_WITH_RAW12
+#include "raw12.h"
+#endif
+#if Z62_WITH_RAW12_HOOK_ONLY
+#include "raw12_hook_only.h"
 #endif
 #if Z62_WITH_PORTRAIT
 #include "portrait_menu.c"
@@ -33,6 +45,14 @@ z62_u32 z62_main(const struct z62_api *api)
 #endif
 #if Z62_WITH_MOVIE_ROTATION
     if (!movie_rot_ready()) return 4;
+#endif
+#if Z62_WITH_RAW12
+    z62_u32 raw12_result=raw12_install();
+    if (raw12_result) return 4+raw12_result;
+#endif
+#if Z62_WITH_RAW12_HOOK_ONLY
+    z62_u32 raw12_hook_result=raw12_hook_only_install();
+    if (raw12_hook_result) return 8+raw12_hook_result;
 #endif
 #if Z62_WITH_PORTRAIT
     if (!histogram_horizon_ready(api)) return 3;
