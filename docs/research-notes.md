@@ -282,6 +282,25 @@ ffmpeg -v error -i out/raw12_qemu/check.MOV -f null -
 
 同一模块在真机普通 1080p30 短录后没有 Z12，新的 `R12S000.BIN` 为 `state=3`、`captured=1`、`torn=1`、`rejected=0`、`export_attempted=0`。两块申请第一轮均成功（`0xc2d03dd8/0xc3c6f090`），宽度/高度/行距仍为 2022/1138/3040，因此不是分配或文件系统失败；第二帧复制期间触及撕裂保护，导出未启动。QEMU 的 MIPU stream 只在计时器到达时置 `MIPU_ST_FRAME_DONE`，不模拟真实 RAW 源环切换，不能覆盖该失败。撕裂诊断版 SHA-256 `1832d0bf2760a5aa5e61a1942546bdadca19578dc4bf44b88b6b4d6cc64ac363` 已按同一基线通过 QEMU 复验：`captured=2`、`torn=0`、`rejected=0`、`exported=1`，序号 `0x729/0x72a`，Z12 SHA-256 `7fa3d48077c02671cd882cc03f26254eb653270370f65cebf3e96fdc0f1ced55`；同次 4.68 秒原厂 MOV 完整解码通过。真机状态文件中 `data[22]` 为 `0x2201` 时表示复制期间帧序号变化，`0x2202` 表示源地址变化，`0x2203` 表示第二帧序号不连续；`data[23]/data[24]` 分别保存复制后的序号和源地址。此版本只定位原因，并未修复真机撕裂；撕裂时仍不导出，不恢复连续写卡。
 
+### 真机复制超时与 RAWOUT 单帧隔离
+
+诊断版在真机生成的 `R12S001.BIN` 为 `state=3`、`captured=1`、`torn=1`、`dual_error=0x2201`，复制后的序号为 `0x96`，源地址仍为 `0x85d1b800`。这确认同一源缓冲在 CPU 复制期间被后续帧覆盖；不是地址切换，也没有进入导出。继续重复同一复制流程没有诊断价值。
+
+下一阶段改用 MIPU 第二路 RAW 输出，先只做一帧。`qemu/expeed6_mipu.c` 的研究模型在每个流帧完成前读取当前 RAWOUT 寄存器，并通过 `mipu_model_raw_out` 实际复制 RAW 到目标，再发出帧完成事件。修改模型后从 `qemu-expeed` 根目录运行 `bash apply_and_build_macos.sh`，同步到 `.runtime/qemu-9.1.0` 并重建实际使用的 `qemu-system-arm`；不要只编译另一份源码。通用 DMA 守卫默认拒绝写 `0xc1800000–0xc6100000` 的 RTOS 区，即使地址来自原厂分配器；因此首轮 RAWOUT 实验生成的近乎全黑文件是未初始化内存，不是有效捕获。只有帧事件而没有实际 DMA 写入时，不得验收。
+
+该实验需要显式设置 `EXPEED_RAWOUT_PRIVATE=1`，才允许流 RAWOUT 写入上述 RTOS 区；默认行为和其他 DMA 守卫不变。此开关只用于私有缓冲模型实验，不是通用关闭安全检查：
+
+```sh
+EXPEED_RAWOUT_PRIVATE=1 MODULE=/absolute/path/to/Z62APP-rawout-single.BIN \
+  bash out/raw12_qemu/start.sh
+```
+
+RAWOUT 单帧模块 SHA-256 `437b5d0f6cd5af258d4105e4ec5f0f3ffa88913a15a97356c72df1b6bd3442b2`，从录像开始后第 4 个帧完成事件起再检查几何并分配一个私有缓冲，设置 `RAWOUT_ADDR=buffer`、`RAWOUT_PITCH=3040`，只切换 `RAWOUT_CTL` 的 bit0。帧完成回调在原生处理之后记录目标和序号并立即关闭 bit0，不执行整帧 CPU 复制、不打开文件。停止原厂录像约 2 秒后才使目标缓存失效并导出一个 Z12，然后释放内存。
+
+QEMU 实测 `state=2`、`captured=1`、`torn=0`、`rejected=0`、`exported=1`、帧完成时 `RAWOUT_CTL=3`，目标与私有缓冲地址一致。`R12S011.BIN` 无导出错误，两个分配指针在停止后归零。`RAW12005.Z12` SHA-256 为 `700e12a941495d5c5b5f2327a6a5e4ab13c36904e57c8df9e8b3f3a372aff98e`；导出的私有缓冲与 Z12 载荷逐字节相同，并与当前源地址每一行的 3,033 个有效打包字节完全一致。行尾 7 字节填充不属于像素，不参与该项比较。DNG 实际出图且与已验证单帧样本一致。同次 5.76 秒、1080p25 原厂 MOV 经 FFmpeg 完整解码通过。
+
+真机状态诊断使用 `data[22]`：`0x2301` 为完成时 RAWOUT 控制/目标不匹配，`0x2302` 为序号不是下一帧，`0x2303` 为几何变化，`0x2304` 为初始源无效或 RAWOUT 已占用，`0x2305` 为等待帧超时。**真机尚未验证 RAWOUT 的寄存器锁存时机和实际 DMA 数据，不能由上述模型结果推导为真机成功，更不能直接跳到连续写卡。**
+
 ## 验证边界
 
 固件打包会执行原包 K8 验证、主模块 CRC、包 CRC、重签、重新解密和目录逐成员比对。QEMU 可验证启动、读卡、模块初始化和回调安装，但其录像编码与真实硬件计时不完整，不能据此宣称真机已突破 29:59。最终仍需真机录像验证。

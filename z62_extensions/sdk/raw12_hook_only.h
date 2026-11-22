@@ -12,6 +12,9 @@
 #ifndef Z62_RAW12_DUAL_FRAME
 #define Z62_RAW12_DUAL_FRAME 0
 #endif
+#ifndef Z62_RAW12_RAWOUT_SINGLE
+#define Z62_RAW12_RAWOUT_SINGLE 0
+#endif
 
 #define RH_WORD(a) (*(volatile z62_u32 *)(a))
 #define RH_BYTE(a) (*(volatile unsigned char *)(a))
@@ -29,6 +32,14 @@ static z62_u32 raw12_hook_last_code;
 static z62_u32 raw12_hook_last_status;
 static z62_u32 raw12_hook_last_movie;
 static z62_u32 raw12_hook_worker_iterations;
+#if Z62_RAW12_RAWOUT_SINGLE
+static z62_u32 raw12_rawout_armed;
+static z62_u32 raw12_rawout_done;
+static z62_u32 raw12_rawout_ready_sequence;
+static z62_u32 raw12_rawout_sequence;
+static z62_u32 raw12_rawout_seen_ctl;
+static z62_u32 raw12_rawout_seen_address;
+#endif
 
 static z62_u32 raw12_hook_rom_function(z62_u32 address)
 {
@@ -40,6 +51,17 @@ static z62_u32 raw12_hook_event(z62_u32 code,z62_u32 status)
     z62_u32 result=RH_CALL(raw12_hook_native,z62_u32,z62_u32,z62_u32)(code,status);
     ++raw12_hook_notifications;
     if(status&0x1000u) ++raw12_hook_frames;
+#if Z62_RAW12_RAWOUT_SINGLE
+    if((status&0x1000u) && raw12_rawout_armed && (RH_WORD(0x203803e8u)&1u)) {
+        raw12_rawout_seen_ctl=RH_WORD(0x203803e8u);
+        raw12_rawout_seen_address=RH_WORD(0x203803ecu);
+        RH_WORD(0x203803e8u)=raw12_rawout_seen_ctl&~1u;
+        raw12_rawout_sequence=raw12_hook_frames;
+        raw12_rawout_armed=0;
+        __asm__ volatile("dmb sy" ::: "memory");
+        raw12_rawout_done=1;
+    }
+#endif
     raw12_hook_last_code=code;
     raw12_hook_last_status=status;
     raw12_hook_last_movie=RH_BYTE(RH_MOVIE_ACTIVE);
@@ -321,9 +343,15 @@ static z62_u32 raw12_write_status(void)
     data[20]=raw12_single_exported;
     data[21]=raw12_single_export_errors;
     data[22]=raw12_export_last_open;
-    if(Z62_RAW12_DUAL_FRAME) data[22]=raw12_dual_error;
+    if(Z62_RAW12_DUAL_FRAME || Z62_RAW12_RAWOUT_SINGLE) data[22]=raw12_dual_error;
     data[23]=raw12_export_last_write;
     data[24]=raw12_export_last_close;
+#if Z62_RAW12_RAWOUT_SINGLE
+    if(Z62_RAW12_RAWOUT_SINGLE && raw12_single_state!=2) {
+        data[23]=raw12_rawout_seen_ctl;
+        data[24]=raw12_rawout_seen_address;
+    }
+#endif
     if(Z62_RAW12_DUAL_FRAME && raw12_single_state==3) {
         data[23]=raw12_dual_after_sequence;
         data[24]=raw12_dual_after_source;
@@ -458,8 +486,123 @@ static void raw12_dual_step(void)
     raw12_single_state=index+1;
 }
 
+#if Z62_RAW12_RAWOUT_SINGLE
+static void raw12_rawout_disarm(void)
+{
+    if(raw12_rawout_armed) {
+        RH_WORD(0x203803e8u)=RH_WORD(0x203803e8u)&~1u;
+        raw12_rawout_armed=0;
+        __asm__ volatile("dmb sy" ::: "memory");
+    }
+}
+
+static void raw12_rawout_complete(void)
+{
+    if(!raw12_rawout_done) return;
+    raw12_rawout_done=0;
+    if(!(raw12_rawout_seen_ctl&1u) || raw12_rawout_seen_address!=(z62_u32)raw12_single_buffer) {
+        raw12_dual_error=0x2301;
+    } else if(raw12_rawout_sequence!=raw12_single_sequence+1) {
+        raw12_dual_error=0x2302;
+    } else if(RH_WORD(0x20380048u)!=(raw12_single_width<<16|raw12_single_height) ||
+              (RH_WORD(0x2038030cu)&0xffffu)!=raw12_single_pitch) {
+        raw12_dual_error=0x2303;
+    }
+    if(raw12_dual_error) {
+        raw12_single_state=4;
+        ++raw12_single_rejected;
+        return;
+    }
+    raw12_single_sequence=raw12_rawout_sequence;
+    raw12_single_state=2;
+    raw12_single_captured=1;
+}
+
+static void raw12_rawout_step(void)
+{
+    if(RH_BYTE(RH_MOVIE_ACTIVE)!=1) {
+        raw12_rawout_disarm();
+        raw12_rawout_ready_sequence=0;
+        if(raw12_single_state==1) raw12_rawout_complete();
+        if(raw12_single_seen_recording && !raw12_single_status_written) {
+            if(++raw12_single_export_wait<200) return;
+            if(raw12_single_buffer && raw12_single_state==2 && !raw12_single_export_attempted) {
+                RH_CALL(0x1034bde9,void,void *,z62_u32)(raw12_single_buffer,raw12_single_frame_bytes);
+                raw12_single_export_attempted=1;
+                raw12_export_write_frame();
+            }
+            raw12_single_status_result=raw12_write_status();
+            raw12_single_status_written=1;
+        }
+        raw12_single_release();
+        raw12_single_state=0;
+        raw12_single_wait=0;
+        return;
+    }
+    if(raw12_single_state>=2) return;
+    if(raw12_single_state==0) {
+        raw12_single_seen_recording=1;
+        raw12_single_status_written=0;
+        raw12_single_export_wait=0;
+        raw12_single_export_attempted=0;
+        raw12_single_captured=0;
+        raw12_single_torn=0;
+        raw12_single_rejected=0;
+        raw12_dual_error=0;
+        if(!raw12_rawout_ready_sequence) raw12_rawout_ready_sequence=raw12_hook_frames+4;
+        if(raw12_hook_frames<raw12_rawout_ready_sequence) return;
+        if(!raw12_single_geometry()) {
+            if(++raw12_single_wait>=100) {
+                raw12_dual_error=0x2101;
+                raw12_single_state=4;
+                ++raw12_single_rejected;
+            }
+            return;
+        }
+        raw12_single_allocation=RH_CALL(0x1034c1f1,void *,z62_u32,z62_u32)(raw12_single_frame_bytes+63u,0);
+        if(!raw12_single_allocation) {
+            raw12_dual_error=0x2102;
+            raw12_single_state=4;
+            ++raw12_single_rejected;
+            return;
+        }
+        raw12_single_buffer=(unsigned char *)(((z62_u32)raw12_single_allocation+63u)&~63u);
+        raw12_single_source=RH_WORD(0x20380310u);
+        if(!raw12_single_ram(raw12_single_source,raw12_single_frame_bytes) || (RH_WORD(0x203803e8u)&1u)) {
+            raw12_dual_error=0x2304;
+            raw12_single_state=4;
+            ++raw12_single_rejected;
+            return;
+        }
+        raw12_rawout_done=0;
+        raw12_rawout_seen_ctl=0;
+        raw12_rawout_seen_address=0;
+        RH_WORD(0x203803ecu)=(z62_u32)raw12_single_buffer;
+        RH_WORD(0x203803f0u)=raw12_single_pitch;
+        raw12_single_sequence=raw12_hook_frames;
+        raw12_single_wait=0;
+        raw12_single_state=1;
+        raw12_rawout_armed=1;
+        __asm__ volatile("dmb sy" ::: "memory");
+        RH_WORD(0x203803e8u)=RH_WORD(0x203803e8u)|1u;
+        return;
+    }
+    raw12_rawout_complete();
+    if(raw12_single_state==1 && ++raw12_single_wait>=100) {
+        raw12_rawout_disarm();
+        raw12_dual_error=0x2305;
+        raw12_single_state=4;
+        ++raw12_single_rejected;
+    }
+}
+#endif
+
 static void raw12_single_step(void)
 {
+    if(Z62_RAW12_RAWOUT_SINGLE) {
+        raw12_rawout_step();
+        return;
+    }
     if(Z62_RAW12_DUAL_FRAME) {
         raw12_dual_step();
         return;
