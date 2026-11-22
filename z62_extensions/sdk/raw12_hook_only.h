@@ -88,6 +88,8 @@ static z62_u32 raw12_dual_retries;
 static z62_u32 raw12_dual_error;
 static z62_u32 raw12_dual_allocation_results[2];
 static z62_u32 raw12_dual_allocation_attempts;
+static z62_u32 raw12_dual_after_sequence;
+static z62_u32 raw12_dual_after_source;
 static z62_u32 raw12_dual_pool_status[2];
 #endif
 
@@ -322,7 +324,10 @@ static z62_u32 raw12_write_status(void)
     if(Z62_RAW12_DUAL_FRAME) data[22]=raw12_dual_error;
     data[23]=raw12_export_last_write;
     data[24]=raw12_export_last_close;
-    if(Z62_RAW12_DUAL_FRAME && raw12_single_state!=2) {
+    if(Z62_RAW12_DUAL_FRAME && raw12_single_state==3) {
+        data[23]=raw12_dual_after_sequence;
+        data[24]=raw12_dual_after_source;
+    } else if(Z62_RAW12_DUAL_FRAME && raw12_single_state!=2) {
         data[23]=raw12_dual_pool_status[0];
         data[24]=raw12_dual_pool_status[1];
     }
@@ -378,6 +383,8 @@ static void raw12_dual_step(void)
         raw12_dual_retries=0;
         raw12_dual_error=0;
         raw12_dual_allocation_attempts=0;
+        raw12_dual_after_sequence=0;
+        raw12_dual_after_source=0;
         if(!raw12_single_geometry()) {
             if(++raw12_single_wait>=100) {
                 raw12_dual_error=0x2101;
@@ -430,12 +437,16 @@ static void raw12_dual_step(void)
     RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source,raw12_single_frame_bytes);
     RH_CALL(0x1035d254,void *,void *,const void *,z62_u32)(index ? raw12_dual_buffer : raw12_single_buffer,
         (unsigned char *)source,raw12_single_frame_bytes);
-    if(sequence!=raw12_hook_frames || source!=RH_WORD(0x20380310u)) {
+    raw12_dual_after_sequence=raw12_hook_frames;
+    raw12_dual_after_source=RH_WORD(0x20380310u);
+    if(sequence!=raw12_dual_after_sequence || source!=raw12_dual_after_source) {
+        raw12_dual_error=sequence!=raw12_dual_after_sequence ? 0x2201 : 0x2202;
         raw12_single_state=3;
         ++raw12_single_torn;
         return;
     }
     if(index==1 && sequence!=raw12_dual_sequences[0]+1) {
+        raw12_dual_error=0x2203;
         raw12_single_state=3;
         ++raw12_single_torn;
         return;
