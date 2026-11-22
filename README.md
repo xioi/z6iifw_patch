@@ -14,6 +14,7 @@
 | 功能 | 当前实现 | 验证状态 |
 | --- | --- | --- |
 | SD 原生模块加载 | 启动后读取并执行 `Z62APP.BIN`，支持模块校验、重定位和缓存同步 | QEMU 启动、读卡、加载及回调安装通过 |
+| 参数化组合构建 | 通过构建参数选择竖屏、EVF、录像和对焦诊断，只生成一个模块 | 默认组合与现有真机候选二进制一致 |
 | 后屏竖拍 UI | 旋转拍摄信息和 4×3 i 菜单，同步根界面触控热区，适配部分二级设置页和菜单内方向切换 | QEMU 通过；真机仍有下述已知问题 |
 | EVF 竖屏拍摄信息 | 实验性旋转 EVF 拍摄信息，处理 LCD/EVF 切换 | QEMU 无法验证 EVF；需真机确认 |
 | 普通录像时长扩展 | 运行时同步 writer、父录制任务和 UI 时长状态 | 回调安装通过；尚未确认真机可稳定超过 29:59 |
@@ -27,19 +28,17 @@ QEMU 中的后屏竖拍信息布局如下，场景图像本身保持原方向：
 
 ## 下载与发布文件
 
-预编译固件和模块不直接提交到 Git 源码仓库，应从项目的 **GitHub Releases** 获取与源码版本匹配的发布压缩包。发布包应包含：
+预编译固件和默认配置模块不直接提交到 Git 源码仓库，应从项目的 **GitHub Releases** 获取与源码版本匹配的发布压缩包。发布包只保留一种模块配置：
 
 | 文件 | 用途 |
 | --- | --- |
 | `firmware/Z6_2_0170_loader.bin` | 模块加载器升级固件，只需安装一次 |
-| `firmware/Z6_2_0170_loader.bin.json` | 构建、原包校验及回读验证报告 |
-| `sd/Z62APP.BIN` | 组合模块：竖屏 UI、EVF 实验和普通录像时长扩展 |
-| `sd/lcd-only/Z62APP.BIN` | 回退模块：不包含 EVF 实验路径 |
-| `sd/movie-only/Z62APP.BIN` | 仅普通录像时长扩展 |
-| `sd/diagnostics/Z62APP.BIN` | 对焦诊断模块，生成 `FOCUSPROP.BIN` |
-| `SHA256SUMS.txt` | 上述二进制文件的 SHA-256 校验值 |
+| `firmware/Z6_2_0170_loader.bin.json` | 加载器构建、原包校验及回读验证报告 |
+| `sd/Z62APP.BIN` | 默认发布配置：LCD 竖屏、EVF 实验和普通录像时长扩展 |
+| `sd/Z62APP.BIN.json` | 模块配置、编译定义、哈希及完整构建报告 |
+| `SHA256SUMS.txt` | 加载器和模块的 SHA-256 校验值 |
 
-源码仓库默认忽略 `firmware/`、`sd/`、`artifacts/` 和二进制产物；因此 GitHub 自动生成的 Source code 压缩包不包含预编译文件。自行构建见[构建指南](docs/building.md)。
+源码仓库默认忽略 `firmware/`、`sd/`、`artifacts/` 和二进制产物；因此 GitHub 自动生成的 Source code 压缩包不包含预编译文件。需要其他功能组合时，使用[构建指南](docs/building.md)重新生成同一个 `Z62APP.BIN`，不再维护 LCD-only、movie-only 或 diagnostics 等独立预编译副本。
 
 ## 安装
 
@@ -52,14 +51,14 @@ QEMU 中的后屏竖拍信息布局如下，场景图像本身保持原方向：
 
 如果已经安装了相同校验值的加载器，不必重复刷机；后续更新只需替换 `Z62APP.BIN`。
 
-### 2. 安装一个 SD 模块
+### 2. 安装 SD 模块
 
-1. 从四种模块中选择一种，不要叠加安装。
-2. 删除 SD 卡根目录中已有的 `Z62APP.BIN`，再将所选模块复制到根目录，文件名保持为 `Z62APP.BIN`。不要直接依赖覆盖写入。
+1. 使用发布包中的默认配置，或按构建指南生成所需配置。
+2. 删除 SD 卡根目录中已有的 `Z62APP.BIN`，再将新模块复制到根目录，文件名保持为 `Z62APP.BIN`。不要直接依赖覆盖写入。
 3. 等待存储卡访问结束，关机后重新开机。加载器依次尝试 `B:\Z62APP.BIN` 和 `A:\Z62APP.BIN`。
 4. 先检查横屏、左右竖屏、i 菜单、各 DISP 页面及照片/视频切换，再进行短录像测试。
 
-对焦诊断模块的使用和日志解析方法见[对焦诊断指南](docs/focus-distance.md)。
+`.json` 清单用于在电脑上确认配置，不必复制到相机。对焦诊断配置的使用和日志解析方法见[对焦诊断指南](docs/focus-distance.md)。
 
 ## 当前已知问题
 
@@ -79,23 +78,20 @@ QEMU 中的后屏竖拍信息布局如下，场景图像本身保持原方向：
 
 ## 回退与恢复
 
-- **EVF 或组合模块异常**：删除卡根目录旧文件，改用 `sd/lcd-only/Z62APP.BIN`。
-- **只需要录像实验功能**：使用 `sd/movie-only/Z62APP.BIN`。
+- **需要关闭 EVF 实验路径**：用 `--portrait --movie` 重新构建 LCD 竖屏＋录像配置。
+- **只需要录像实验功能**：用 `--movie` 重新构建。
 - **停用全部扩展模块**：删除 SD 卡根目录的 `Z62APP.BIN`，完整断电后重开；加载器仍在，但不会加载扩展。
 - **恢复官方固件**：刷回尼康官方 Z6II C 1.70 升级包。官方固件需要自行获取，本项目不附带原厂固件。
 
-如果模块导致异常，先关机并取出 SD 卡，再重新启动。不要在相机仍访问存储卡时拔卡。
+切换配置时先删除相机 SD 卡上的旧模块，再复制新文件。如果模块导致异常，先关机并取出 SD 卡，再重新启动。不要在相机仍访问存储卡时拔卡。
 
 ## 当前候选版校验值
 
-这些值对应 `7dab6f1` 源码生成的候选产物，用于确认测试文件一致，不代表稳定版认证。组合、LCD-only 和仅录像模块与现有真机候选一致；对焦诊断模块已从同一源码重新构建，但新校验值尚未重新进行真机诊断测试：
+默认发布参数 `--portrait --evf --movie` 生成的模块与现有真机组合候选一致。以下校验值只覆盖加载器和这一默认配置；其他参数组合必须记录自己的清单、哈希和测试结果：
 
 ```text
 aa5e2e8599f9126e92476c64e7de7c966d662d101e7d9ab19a358d1bb19ceacf  firmware/Z6_2_0170_loader.bin
 cedba0235aa94153be215d0c6d3aa008dc8d8b30cbc6f6ce7f9c8dfe6239421b  sd/Z62APP.BIN
-a99f8357afca95428a85a79dc1b47c5569adaf297ce671fa03a27a0b543fb14f  sd/lcd-only/Z62APP.BIN
-eeb23e7423797de003c34ccc7a2ae355c17413a48199e445f78cb22ee1fbead7  sd/movie-only/Z62APP.BIN
-1808d5d1ee6d2cb4949a7ba9c5c258224614b9ed7f5a8afece1fbf5127c943b4  sd/diagnostics/Z62APP.BIN
 ```
 
 macOS 可在发布包根目录运行：
@@ -108,15 +104,26 @@ Linux 使用 `sha256sum -c SHA256SUMS.txt`。
 
 ## 从源码构建
 
-只构建 SD 模块不需要原厂固件或密钥；构建签名升级包则需要官方 C 1.70 更新包、匹配的解密表和 K8 签名材料，这些输入不随仓库提供。
+只构建 SD 模块不需要原厂固件或密钥。以下命令生成默认发布组合：
 
 ```sh
-python3 z62_extensions/tools/module.py \
-  z62_extensions/plugins/extensions.c \
-  --output artifacts/Z62APP.BIN
+python3 z62_extensions/tools/build.py --portrait --evf --movie
 ```
 
-完整依赖安装、四种模块、加载器、校验和 Release 打包步骤见 **[构建指南](docs/building.md)**。
+输出为 `artifacts/Z62APP.BIN` 和 `artifacts/Z62APP.BIN.json`。切换到其他配置时，明确使用 `--force` 替换旧输出，例如：
+
+```sh
+# LCD 竖屏 + 录像，不含 EVF
+python3 z62_extensions/tools/build.py --portrait --movie --force
+
+# 仅录像
+python3 z62_extensions/tools/build.py --movie --force
+
+# 对焦诊断，自动包含 LCD 竖屏路径
+python3 z62_extensions/tools/build.py --focus-probe --force
+```
+
+这些示例是互斥配置，不要依次执行后再误认为输出仍包含全部功能。完整参数、依赖关系、加载器构建和 Release 打包步骤见 **[构建指南](docs/building.md)**。构建签名升级包需要官方 C 1.70 更新包、匹配的解密表和 K8 签名材料，这些输入不随仓库提供。
 
 ## 验证边界
 
@@ -124,15 +131,16 @@ python3 z62_extensions/tools/module.py \
 - QEMU 已验证宿主启动、读卡、重定位、模块入口、回调安装，以及部分菜单的双方向旋转和触控坐标映射。
 - QEMU 不提供完整 EVF、录像编码、硬件计时或真实触摸环境，不能据此宣称这些功能已在真机通过。
 - 正式模块曾在 ARM/QEMU 环境返回 `LOADED=11`、模块返回 0；这只证明加载链路，不等同于长期稳定性。
+- 默认组合与旧候选二进制一致，不代表其他参数组合已经过同等真机验证。
 
 ## 源码结构
 
 ```text
 z62_extensions/
 ├── host/                  # 启动 Hook、SD 模块加载器和链接脚本
-├── plugins/               # 竖屏、录像和对焦诊断模块
+├── plugins/               # 可条件组合的竖屏、录像和对焦诊断代码
 ├── sdk/                   # Z6II 地址、数据结构和模块 ABI
-└── tools/                 # 模块、宿主及升级包构建工具
+└── tools/                 # 参数化模块、宿主及升级包构建工具
 
 decrypt_firmware.py        # 旧版尼康固件容器解密与校验
 repack_firmware.py         # 模块替换、CRC 与 K8 重签
@@ -146,7 +154,7 @@ tools/                     # PTP 与真机研究工具
 提交问题或测试结果时，请注明：
 
 - 相机型号和 C 固件版本；
-- 使用的模块变体及 SHA-256；
+- 构建参数、模块 SHA-256 及 `.json` 配置清单；
 - 拍摄/视频模式、LCD/EVF、屏幕方向和复现步骤；
 - 实际现象、恢复方式，以及问题是否能在官方模块缺失时复现。
 

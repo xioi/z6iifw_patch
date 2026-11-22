@@ -97,15 +97,17 @@ def from_elf(data):
                         symbols={k: v for k, v in symbols.items() if k and not k.startswith('$')})
 
 
-def build(source):
+def build(source, defines=()):
     with tempfile.TemporaryDirectory(prefix='z62-native-module-') as folder:
         obj, elf = Path(folder) / 'module.o', Path(folder) / 'module.elf'
-        subprocess.run([tool('clang'), '--target=arm-none-eabi', '-mcpu=cortex-a9', '-mthumb',
-                        '-mfloat-abi=soft', '-Os', '-fPIC', '-fvisibility=hidden',
-                        '-ffreestanding', '-fno-builtin', '-fno-unwind-tables',
-                        '-fno-asynchronous-unwind-tables', '-fno-stack-protector',
-                        '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'sdk'),
-                        '-c', str(source), '-o', str(obj)], check=True)
+        command = [tool('clang'), '--target=arm-none-eabi', '-mcpu=cortex-a9', '-mthumb',
+                   '-mfloat-abi=soft', '-Os', '-fPIC', '-fvisibility=hidden',
+                   '-ffreestanding', '-fno-builtin', '-fno-unwind-tables',
+                   '-fno-asynchronous-unwind-tables', '-fno-stack-protector',
+                   '-Wall', '-Wextra', '-Werror', '-I', str(ROOT / 'sdk')]
+        command.extend('-D' + define for define in defines)
+        command.extend(['-c', str(source), '-o', str(obj)])
+        subprocess.run(command, check=True)
         subprocess.run([tool('arm-none-eabi-ld'), '-T', str(ROOT / 'sdk/module.ld'),
                         '--emit-relocs', '--no-undefined', str(obj), '-o', str(elf)], check=True)
         return from_elf(elf.read_bytes())

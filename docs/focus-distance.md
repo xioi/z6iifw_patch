@@ -26,7 +26,7 @@ Nikon 的 NEF 样本中确实存在 `FocusDistance`。ExifTool 的 Nikon 定义�
 ## 生成诊断日志
 
 1. 备份 SD 卡上的现有 `Z62APP.BIN`，并删除卡根目录已有的 `FOCUSPROP.BIN`。该写入路径不会覆盖旧日志，必须删除后才能生成新文件。
-2. 将 `sd/diagnostics/Z62APP.BIN` 复制到卡根目录，文件名保持 `Z62APP.BIN`。
+2. 在电脑上的仓库根目录运行 `python3 z62_extensions/tools/build.py --focus-probe --force`，再将生成的 `artifacts/Z62APP.BIN` 复制到卡根目录，文件名保持 `Z62APP.BIN`。该配置自动包含 LCD 竖屏依赖，不包含 EVF 和录像功能。
 3. 正常开机，进入拍摄界面。半按快门并缓慢转动对焦环，从近到远、再从远到近，覆盖明显不同的位置。
 4. 松开快门，等待约 2 秒，再等待存储卡指示灯熄灭。
 5. 取出存储卡，检查根目录是否生成 `FOCUSPROP.BIN`。
@@ -40,4 +40,4 @@ python3 tools/parse_focusprop.py /path/to/FOCUSPROP.BIN
 
 诊断模块在初始化后以及检测到属性变化并稳定约 8 次 GUI 更新时写入日志。旧版属性日志为 1056 字节；包含绘制记录的新日志为 5152 字节，解析器同时支持两者。日志不包含照片或个人数据。
 
-完成后，将发布目录 `sd/Z62APP.BIN` 的正式修正版恢复为卡根目录的 `Z62APP.BIN`，并完整断电重开。
+完成后，删除卡根目录的诊断模块并恢复正式配置。可复制发布包中的 `sd/Z62APP.BIN`，或运行 `python3 z62_extensions/tools/build.py --portrait --evf --movie --force` 重新生成默认组合；替换后完整断电重开。

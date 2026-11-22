@@ -1,21 +1,21 @@
 # 构建与发布指南
 
-本文说明如何从源码构建 Z6II C 1.70 的 SD 原生模块、加载器升级包，以及如何整理 GitHub Releases 附件。
+本文说明如何按功能组合构建一个 Z6II C 1.70 SD 原生模块，以及如何构建加载器升级包和整理 GitHub Releases 附件。
 
 > [!WARNING]
 > 构建成功只说明代码、格式和签名校验通过，不等于真机功能或稳定性通过。当前模块仍有 README 中列出的已知问题。不要为其他机型或其他固件版本直接修改目标名称后刷入。
 
 ## 1. 构建产物
 
-构建分为两条相对独立的路径：
-
 | 产物 | 构建入口 | 需要的额外输入 |
 | --- | --- | --- |
-| SD 原生模块 `Z62APP.BIN` | `z62_extensions/tools/module.py` | 无 |
+| 可配置 SD 模块 `Z62APP.BIN` | `z62_extensions/tools/build.py` | 无 |
 | 加载器升级包 `Z6_2_0170_loader.bin` | `z62_extensions/tools/build_package.py` | 官方 C 1.70 更新包、解密表、K8 |
 | 单独的加载器主模块 | `z62_extensions/tools/build_host.py` | 从官方更新包解出的原始主模块 |
 
-只修改 `plugins/` 中的模块代码时，通常只需重建并替换 SD 卡根目录的 `Z62APP.BIN`，不必重刷加载器。只有修改 `host/`、加载 ABI 或宿主地址映射时才需要重建升级包。
+`build.py` 每次只生成一个 `Z62APP.BIN` 和一个同名 `.json` 配置清单。切换功能时使用 `--force` 替换这两个文件，不再为 LCD-only、movie-only、diagnostics 等配置保留独立预编译副本。
+
+只修改 `plugins/` 中的模块代码或功能组合时，通常只需替换 SD 卡根目录的 `Z62APP.BIN`，不必重刷加载器。只有修改 `host/`、加载 ABI 或宿主地址映射时才需要重建升级包。
 
 ## 2. 环境准备
 
@@ -26,6 +26,8 @@
 - GNU `arm-none-eabi-ld`；
 - LLVM `llvm-objcopy` 和 `llvm-nm`（构建宿主时使用）；
 - Git（获取源码）和 `zip`（仅发布打包时使用）。
+
+NumPy 只用于固件解密和升级包构建；仅构建 SD 模块不需要它。
 
 ### macOS / Homebrew
 
@@ -42,7 +44,7 @@ Homebrew LLVM 是 keg-only，`llvm-objcopy`、`llvm-nm` 默认可能不在 `PATH
 
 这里刻意把 LLVM 目录追加到 `PATH` **末尾**，以保留系统 Clang。当前候选版已使用 Apple Clang 17 构建；Homebrew Clang 23 会对固定宽度多语言字符串数组触发 `-Wunterminated-string-initialization`，并因构建参数中的 `-Werror` 而停止。不要为了消除错误而随意扩大这些固定宽度数组。
 
-其他操作系统安装同名工具即可，建议先使用 Clang 17 这一已验证版本。构建脚本会在 `PATH` 中查找工具；Apple Silicon Homebrew 的模块构建脚本还会检查 `/opt/homebrew/opt/llvm/bin`，但不要依赖这一回退路径完成全部构建。
+其他操作系统安装同名工具即可，建议先使用 Clang 17 这一已验证版本。构建脚本会在 `PATH` 中查找工具；Apple Silicon Homebrew 的构建脚本还会检查 `/opt/homebrew/opt/llvm/bin`，但不要依赖这一回退路径完成全部构建。
 
 ### 检查工具
 
@@ -59,51 +61,60 @@ llvm-nm --version
 
 记录这些版本，并在发布候选版时随测试结果保存。不同编译器版本可能生成不同但同样有效的机器码，因此不能仅凭 SHA-256 不同就判断构建损坏。
 
-## 3. 构建 SD 模块
+## 3. 选择功能并构建 SD 模块
 
-所有命令均从仓库根目录执行。以下示例使用新路径 `artifacts/`；若输出已经存在，构建器会拒绝覆盖，确认不再需要旧文件后才添加 `--force`，或换一个新的输出目录。
+### 功能参数
 
-### 组合模块
+| 参数 | 功能 | 依赖 |
+| --- | --- | --- |
+| `--portrait` | LCD 拍摄信息、触控和已适配菜单的竖屏路径 | 无 |
+| `--evf` | 实验性 EVF 竖屏拍摄信息 | 自动启用 `--portrait` |
+| `--movie` | 实验性普通录像时长扩展 | 无，可独立构建 |
+| `--focus-probe` | 对焦属性和原生绘制诊断，生成 `FOCUSPROP.BIN` | 自动启用 `--portrait` |
+| `--output PATH` | 指定模块输出路径 | 默认 `artifacts/Z62APP.BIN` |
+| `--force` | 替换旧模块及其配置清单 | 切换配置时显式指定 |
 
-包含竖屏 UI、EVF 实验路径和普通录像时长扩展：
+至少选择一个功能参数。`--evf` 或 `--focus-probe` 自动包含竖屏依赖，但不会自动包含录像功能。旧版自制直方图/水平仪已确认不兼容，不提供构建开关。
 
-```sh
-python z62_extensions/tools/module.py \
-  z62_extensions/plugins/extensions.c \
-  --output artifacts/Z62APP.BIN
-```
-
-### LCD-only 回退模块
-
-不包含 EVF 实验路径：
-
-```sh
-python z62_extensions/tools/module.py \
-  z62_extensions/plugins/lcd_only.c \
-  --output artifacts/lcd-only/Z62APP.BIN
-```
-
-### 仅录像模块
-
-不包含竖屏和 EVF 路径：
+### 默认发布组合
 
 ```sh
-python z62_extensions/tools/module.py \
-  z62_extensions/plugins/movie_limit.c \
-  --output artifacts/movie-only/Z62APP.BIN
+python z62_extensions/tools/build.py --portrait --evf --movie
 ```
 
-### 对焦诊断模块
+默认生成：
+
+```text
+artifacts/Z62APP.BIN       # 复制到相机 SD 卡的唯一模块
+artifacts/Z62APP.BIN.json  # 配置、编译定义、符号、重定位和 SHA-256 清单
+```
+
+终端会输出简要 JSON，确认所选配置、尺寸和哈希。完整报告保存在 `.json` 清单中；其中 `camera_verified` 始终为 `false`，真机测试需要另行记录。
+
+### 其他组合
+
+以下是**互斥示例**，只执行需要的一条。`--force` 表示用新配置替换默认输出，而不是另外保留一份变体：
 
 ```sh
-python z62_extensions/tools/module.py \
-  z62_extensions/plugins/focus_probe.c \
-  --output artifacts/diagnostics/Z62APP.BIN
+# LCD 竖屏 + 录像，不含 EVF
+python z62_extensions/tools/build.py --portrait --movie --force
+
+# 仅 LCD 竖屏
+python z62_extensions/tools/build.py --portrait --force
+
+# LCD + EVF 竖屏，不含录像
+python z62_extensions/tools/build.py --evf --force
+
+# 仅录像
+python z62_extensions/tools/build.py --movie --force
+
+# 对焦诊断，自动包含 LCD 竖屏，不含 EVF 和录像
+python z62_extensions/tools/build.py --focus-probe --force
 ```
 
-每次构建会输出 JSON 报告，包含镜像尺寸、BSS、入口偏移、重定位表和符号。模块构建器会检查 ELF 格式、Thumb 入口、未定义符号、支持的重定位类型和 1 MiB 文件上限，并写入带 CRC32 的 `Z62M` 模块头。
+每次切换后都应检查新的 `.json` 清单和终端哈希，再把同一个输出文件复制到 SD 卡。不要根据旧的文件名猜测当前配置。
 
-四种模块都以 `Z62APP.BIN` 为最终文件名，但**一次只能在 SD 卡根目录放置一种**。保留上面的分目录可以避免互相覆盖。
+底层 `z62_extensions/tools/module.py` 仍可用于编译指定 C 入口和调试模块格式；正式组合构建统一使用 `build.py`，避免绕过功能依赖和配置清单。
 
 ## 4. 构建加载器升级包
 
@@ -172,24 +183,28 @@ python z62_extensions/tools/build_host.py \
 
 ## 5. 校验构建结果
 
+先检查模块清单中的实际配置：
+
+```sh
+python -c "import json; print(json.load(open('artifacts/Z62APP.BIN.json'))['configuration'])"
+```
+
 macOS 使用 `shasum`，Linux 可换成 `sha256sum`：
 
 ```sh
 shasum -a 256 \
   artifacts/Z6_2_0170_loader.bin \
-  artifacts/Z62APP.BIN \
-  artifacts/lcd-only/Z62APP.BIN \
-  artifacts/movie-only/Z62APP.BIN \
-  artifacts/diagnostics/Z62APP.BIN
+  artifacts/Z62APP.BIN
 ```
 
-README 中列出了现有真机候选版的校验值。使用相同源码和工具链时可以据此检查文件是否一致；更换编译器后，应同时检查构建报告并重新完成加载与真机验证，而不是把旧哈希复制到新产物上。
+README 列出了加载器和默认 `--portrait --evf --movie` 组合的真机候选校验值。使用相同源码和工具链时，默认配置应得到相同哈希。其他组合应记录自己的哈希，不要复制默认配置的哈希或真机结论。
 
 至少确认：
 
+- `.json` 中的 `configuration` 和 `defines` 与计划构建的功能一致；
 - 加载器报告的 `stock_package_sha256` 和 `stock_sha256` 与上述原厂值一致；
-- `only_master_changed` 和 `roundtrip_verified` 均为 `true`；
-- 正式功能模块与真机实际测试的模块逐字节一致；诊断等未验证模块已明确标记；
+- 加载器的 `only_master_changed` 和 `roundtrip_verified` 均为 `true`；
+- 发布 ZIP 中的模块、清单和实际测试文件一致；
 - 没有把 `eg1850_mas_01700_loader.bin` 错当成完整升级包发布；
 - 没有把旧版自制直方图模块或 ROM 直改录像表固件重新混入发布包。
 
@@ -197,24 +212,18 @@ README 中列出了现有真机候选版的校验值。使用相同源码和工�
 
 Git 源码仓库会忽略 `firmware/`、`sd/`、`artifacts/` 和 `*.bin`。GitHub 自动生成的 Source code 压缩包因此只包含源码，**必须另外上传包含预编译产物的 Release ZIP**。
 
-以下 macOS 示例把已构建产物整理为带版本号的发布目录。先设置自己的版本号，并确保使用全新的构建产物：
+以下 macOS 示例整理一种发布配置。先设置自己的版本号，并确保 `artifacts/Z62APP.BIN` 是准备发布的配置：
 
 ```sh
 VERSION=0.1.0-rc1
 STAGE="artifacts/release-$VERSION"
 
-mkdir -p "$STAGE/firmware" \
-  "$STAGE/sd/lcd-only" \
-  "$STAGE/sd/movie-only" \
-  "$STAGE/sd/diagnostics"
+mkdir -p "$STAGE/firmware" "$STAGE/sd"
 
 cp artifacts/Z6_2_0170_loader.bin \
   artifacts/Z6_2_0170_loader.bin.json \
   "$STAGE/firmware/"
-cp artifacts/Z62APP.BIN "$STAGE/sd/Z62APP.BIN"
-cp artifacts/lcd-only/Z62APP.BIN "$STAGE/sd/lcd-only/Z62APP.BIN"
-cp artifacts/movie-only/Z62APP.BIN "$STAGE/sd/movie-only/Z62APP.BIN"
-cp artifacts/diagnostics/Z62APP.BIN "$STAGE/sd/diagnostics/Z62APP.BIN"
+cp artifacts/Z62APP.BIN artifacts/Z62APP.BIN.json "$STAGE/sd/"
 cp README.md LICENSE "$STAGE/"
 cp -R docs "$STAGE/"
 ```
@@ -226,10 +235,7 @@ cp -R docs "$STAGE/"
   cd "$STAGE"
   shasum -a 256 \
     firmware/Z6_2_0170_loader.bin \
-    sd/Z62APP.BIN \
-    sd/lcd-only/Z62APP.BIN \
-    sd/movie-only/Z62APP.BIN \
-    sd/diagnostics/Z62APP.BIN > SHA256SUMS.txt
+    sd/Z62APP.BIN > SHA256SUMS.txt
   zip -r "../z62fw_patch-$VERSION.zip" \
     README.md LICENSE docs firmware sd SHA256SUMS.txt
 )
@@ -242,31 +248,34 @@ shasum -a 256 "artifacts/z62fw_patch-$VERSION.zip" \
 
 1. 先提交源码并创建与 `VERSION` 对应的 Git 标签，记录实际测试提交。
 2. 上传 `z62fw_patch-$VERSION.zip` 及其 `.sha256`，不要只依赖自动 Source code 附件。
-3. 在 Release Notes 中链接 README 的已知问题，列出工具链版本、QEMU 范围和真机测试范围。
-4. 未验证的 EVF、录像超过 29:59 和长期稳定性不得标为已完成。
-5. 不上传官方固件、`key.json`、`sig*.json`、解密后的原厂模块或包含这些材料的构建目录。
+3. 在 Release Notes 中写明模块构建参数，并附上对应 `.json` 清单。
+4. 链接 README 的已知问题，列出工具链版本、QEMU 范围和真机测试范围。
+5. 未验证的 EVF、录像超过 29:59、其他参数组合和长期稳定性不得标为已完成。
+6. 不上传官方固件、`key.json`、`sig*.json`、解密后的原厂模块或包含这些材料的构建目录。
 
 ## 7. 常见问题
 
 | 错误 | 原因与处理 |
 | --- | --- |
-| `ModuleNotFoundError: No module named 'numpy'` | 尚未激活虚拟环境或未安装 NumPy；执行 `source .venv/bin/activate` 和 `python -m pip install numpy`。 |
+| `select at least one feature` | 没有选功能；添加 `--portrait`、`--evf`、`--movie` 或 `--focus-probe`。 |
+| `ModuleNotFoundError: No module named 'numpy'` | 构建升级包前尚未激活虚拟环境或安装 NumPy；仅构建 SD 模块不需要 NumPy。 |
 | `Missing build tool: ...` | 工具未安装或不在 `PATH`；macOS 检查 `export PATH="$PATH:$(brew --prefix llvm)/bin"`，并确认 `clang` 仍是已验证的系统版本。 |
 | `-Wunterminated-string-initialization` 被 `-Werror` 提升为错误 | Homebrew Clang 23 与当前固定宽度字符串数组的已知兼容性问题；改用已验证的 Apple Clang 17，不要通过扩大数组来改变数据布局。 |
-| `Output already exists; use --force to replace it` | 构建器正在防止覆盖旧产物；改用新输出路径，或确认后添加 `--force`。 |
+| `output or manifest already exists` | 构建器正在防止覆盖旧配置；确认当前输出可以替换后添加 `--force`。 |
 | `Requires the exact original Z6II C 1.70 master` | 更新包、主模块或版本不正确；核对上面的原厂 SHA-256，不要绕过检查。 |
 | `The supplied K8 does not verify the stock package` | K8 与机型或官方更新包不匹配；检查输入，不要提交或公开密钥。 |
 | `Undefined module symbol` | 模块引用了未提供的外部符号；模块是 freestanding 原生镜像，不能直接依赖主机 libc。 |
-| 重建后 SHA-256 不同 | 可能是工具链变化；记录版本、检查构建报告，并重新验证加载和真机行为。 |
+| 重建后 SHA-256 不同 | 先检查功能参数和 `.json`，再检查源码与工具链版本；不要沿用旧配置的真机结论。 |
 
 ## 8. 真机验证边界
 
-构建和哈希检查之后，仍应分别验证：
+构建和哈希检查之后，应针对**当前清单中的配置**验证：
 
 - 无 `Z62APP.BIN` 时相机正常启动；
-- 每种候选模块单独加载，横屏、左右竖屏和恢复横屏的行为；
+- 横屏、左右竖屏和恢复横屏的行为；
 - 照片/视频模式、各 DISP 页面、i 根菜单和二级菜单；
 - 参数调整页、曝光补偿、ISO、放大及 LCD/EVF 切换；
-- 短录像和正常停止，再在具备散热与存储条件时测试长录像。
+- 短录像和正常停止，再在具备散热与存储条件时测试长录像；
+- 对焦诊断结束后重新构建正式配置，不要继续把诊断模块留在卡上。
 
-任何真机失败都应保留模块哈希、操作步骤和恢复结果。QEMU 成功或模块返回 0 不能替代这些检查。
+任何真机失败都应保留构建参数、模块哈希、操作步骤和恢复结果。QEMU 成功或模块返回 0 不能替代这些检查，一个配置通过也不能推导其他组合全部通过。
