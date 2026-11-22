@@ -6,6 +6,9 @@
 #ifndef Z62_RAW12_SINGLE_FRAME
 #define Z62_RAW12_SINGLE_FRAME 0
 #endif
+#ifndef Z62_RAW12_SINGLE_EXPORT
+#define Z62_RAW12_SINGLE_EXPORT 0
+#endif
 
 #define RH_WORD(a) (*(volatile z62_u32 *)(a))
 #define RH_BYTE(a) (*(volatile unsigned char *)(a))
@@ -18,6 +21,7 @@ static unsigned char raw12_hook_descriptor[28];
 static z62_u32 raw12_hook_native;
 static z62_u32 raw12_hook_installs;
 static z62_u32 raw12_hook_notifications;
+static z62_u32 raw12_hook_frames;
 static z62_u32 raw12_hook_last_code;
 static z62_u32 raw12_hook_last_status;
 static z62_u32 raw12_hook_last_movie;
@@ -32,6 +36,7 @@ static z62_u32 raw12_hook_event(z62_u32 code,z62_u32 status)
 {
     z62_u32 result=RH_CALL(raw12_hook_native,z62_u32,z62_u32,z62_u32)(code,status);
     ++raw12_hook_notifications;
+    if(status&0x1000u) ++raw12_hook_frames;
     raw12_hook_last_code=code;
     raw12_hook_last_status=status;
     raw12_hook_last_movie=RH_BYTE(RH_MOVIE_ACTIVE);
@@ -52,6 +57,27 @@ static z62_u32 raw12_single_source;
 static z62_u32 raw12_single_captured;
 static z62_u32 raw12_single_torn;
 static z62_u32 raw12_single_rejected;
+#if Z62_RAW12_SINGLE_EXPORT
+static z62_u32 raw12_single_movie_width;
+static z62_u32 raw12_single_movie_height;
+static z62_u32 raw12_single_fps_code;
+static z62_u32 raw12_single_fps_numerator;
+static z62_u32 raw12_single_fps_denominator;
+static z62_u32 raw12_single_export_wait;
+static z62_u32 raw12_single_export_attempted;
+static z62_u32 raw12_single_exported;
+static z62_u32 raw12_single_export_errors;
+static z62_u32 raw12_export_next_name;
+static z62_u32 raw12_single_seen_recording;
+static z62_u32 raw12_single_status_written;
+static z62_u32 raw12_single_status_result;
+static z62_u32 raw12_export_last_open;
+static z62_u32 raw12_export_last_write;
+static z62_u32 raw12_export_last_close;
+static z62_u32 raw12_status_next_name;
+static _Alignas(64) z62_u32 raw12_export_header[16];
+static _Alignas(64) z62_u32 raw12_export_frame[4];
+#endif
 
 static z62_u32 raw12_single_ram(z62_u32 address,z62_u32 size)
 {
@@ -79,6 +105,13 @@ static z62_u32 raw12_single_geometry(void)
     z62_u32 packed=(raw12_single_width*12u+7u)>>3;
     if(raw12_single_pitch<packed || raw12_single_pitch>8192) return 0;
     raw12_single_frame_bytes=raw12_single_pitch*raw12_single_height;
+#if Z62_RAW12_SINGLE_EXPORT
+    raw12_single_movie_width=movie_width;
+    raw12_single_movie_height=movie_height;
+    raw12_single_fps_code=fps;
+    raw12_single_fps_denominator=(fps==23 || fps==29) ? 1001 : 1;
+    raw12_single_fps_numerator=fps==23 ? 24000 : fps==29 ? 30000 : fps;
+#endif
     return raw12_single_frame_bytes && raw12_single_frame_bytes<=(4u<<20);
 }
 
@@ -89,9 +122,173 @@ static void raw12_single_release(void)
     raw12_single_buffer=0;
 }
 
+#if Z62_RAW12_SINGLE_EXPORT
+static z62_u32 raw12_export_exists(const char *path)
+{
+    z62_u32 file[10];
+    for(z62_u32 i=0;i<10;++i) ((volatile z62_u32 *)file)[i]=0;
+    RH_CALL(0x104d67a5,void,z62_u32 *,const char *)(file,path);
+    z62_u32 result=RH_CALL(0x104d67a9,z62_u32,z62_u32 *,z62_u32,z62_u32)(file,0,0);
+    if(result!=0x043a0080u) return 0;
+    RH_CALL(0x104d6835,z62_u32,z62_u32 *)(file);
+    return 1;
+}
+
+static int raw12_export_open_unique(void)
+{
+    char path[16]={'B',':','\\','R','A','W','1','2','0','0','0','.','Z','1','2',0};
+    z62_u32 start=raw12_export_next_name;
+    for(z62_u32 n=0;n<1000;++n) {
+        z62_u32 index=(start+n)%1000u;
+        path[8]=(unsigned char)('0'+index/100);
+        path[9]=(unsigned char)('0'+index/10%10);
+        path[10]=(unsigned char)('0'+index%10);
+        for(z62_u32 volume=0;volume<2;++volume) {
+            path[0]=volume ? 'A' : 'B';
+            if(raw12_export_exists(path)) continue;
+            int file=RH_CALL(0x105c1897,int,const char *,z62_u32)(path,0);
+            if(file<0) continue;
+            raw12_export_next_name=index+1;
+            return file;
+        }
+    }
+    return -1;
+}
+
+static z62_u32 raw12_export_write(int file,void *buffer,z62_u32 size)
+{
+    z62_u32 offset=0;
+    while(offset<size) {
+        z62_u32 count=size-offset,actual=0;
+        if(count>65536u) count=65536u;
+        struct { z62_u32 kind; void *buffer; z62_u32 capacity; } request={1,(unsigned char *)buffer+offset,count};
+        RH_CALL(0x1034bdad,void,void *,z62_u32)(request.buffer,count);
+        z62_u32 result=RH_CALL(0x105c17e5,z62_u32,int,void *,z62_u32,z62_u32 *)(file,&request,count,&actual);
+        if(result || actual!=count) return result ? result : 1;
+        offset+=count;
+    }
+    return 0;
+}
+
+static void raw12_export_write_frame(void)
+{
+    int file=raw12_export_open_unique();
+    raw12_export_last_open=(z62_u32)file;
+    if(file<0) {
+        ++raw12_single_export_errors;
+        return;
+    }
+    for(z62_u32 i=0;i<16;++i) raw12_export_header[i]=0;
+    raw12_export_header[0]=0x5236325au;
+    raw12_export_header[1]=1;
+    raw12_export_header[2]=64;
+    raw12_export_header[3]=raw12_single_width;
+    raw12_export_header[4]=raw12_single_height;
+    raw12_export_header[5]=12;
+    raw12_export_header[6]=raw12_single_pitch;
+    raw12_export_header[7]=raw12_single_frame_bytes;
+    raw12_export_header[8]=raw12_single_fps_numerator;
+    raw12_export_header[9]=raw12_single_fps_denominator;
+    raw12_export_header[10]=raw12_single_pitch;
+    raw12_export_header[11]=raw12_single_movie_width;
+    raw12_export_header[12]=raw12_single_movie_height;
+    raw12_export_header[13]=raw12_single_fps_code;
+    raw12_export_header[15]=~0x5236325au;
+    raw12_export_frame[0]=0x46323152u;
+    raw12_export_frame[1]=raw12_single_sequence;
+    raw12_export_frame[2]=raw12_single_frame_bytes;
+    raw12_export_frame[3]=raw12_single_source;
+    z62_u32 result=raw12_export_write(file,raw12_export_header,64);
+    if(!result) result=raw12_export_write(file,raw12_export_frame,16);
+    if(!result) result=raw12_export_write(file,raw12_single_buffer,raw12_single_frame_bytes);
+    z62_u32 closed=RH_CALL(0x105c1749,z62_u32,int)(file);
+    raw12_export_last_write=result;
+    raw12_export_last_close=closed;
+    if(result || closed) ++raw12_single_export_errors;
+    else ++raw12_single_exported;
+}
+static int raw12_status_open_unique(void)
+{
+    char path[16]={'B',':','\\','R','1','2','S','0','0','0','.','B','I','N',0,0};
+    z62_u32 start=raw12_status_next_name;
+    for(z62_u32 n=0;n<1000;++n) {
+        z62_u32 index=(start+n)%1000u;
+        path[7]=(unsigned char)('0'+index/100);
+        path[8]=(unsigned char)('0'+index/10%10);
+        path[9]=(unsigned char)('0'+index%10);
+        for(z62_u32 volume=0;volume<2;++volume) {
+            path[0]=volume ? 'A' : 'B';
+            if(raw12_export_exists(path)) continue;
+            int file=RH_CALL(0x105c1897,int,const char *,z62_u32)(path,0);
+            if(file<0) continue;
+            raw12_status_next_name=index+1;
+            return file;
+        }
+    }
+    return -1;
+}
+
+static z62_u32 raw12_write_status(void)
+{
+    _Alignas(64) z62_u32 data[32];
+    for(z62_u32 i=0;i<32;++i) data[i]=0;
+    data[0]=0x53323152u;
+    data[1]=1;
+    data[2]=raw12_single_state;
+    data[3]=raw12_single_captured;
+    data[4]=raw12_single_torn;
+    data[5]=raw12_single_rejected;
+    data[6]=raw12_single_width;
+    data[7]=raw12_single_height;
+    data[8]=raw12_single_pitch;
+    data[9]=raw12_single_frame_bytes;
+    data[10]=raw12_hook_notifications;
+    data[11]=raw12_hook_installs;
+    data[12]=raw12_hook_last_code;
+    data[13]=raw12_hook_last_status;
+    data[14]=raw12_hook_last_movie;
+    data[15]=raw12_hook_worker_iterations;
+    data[16]=(z62_u32)raw12_single_allocation;
+    data[17]=(z62_u32)raw12_single_buffer;
+    data[18]=raw12_single_export_wait;
+    data[19]=raw12_single_export_attempted;
+    data[20]=raw12_single_exported;
+    data[21]=raw12_single_export_errors;
+    data[22]=raw12_export_last_open;
+    data[23]=raw12_export_last_write;
+    data[24]=raw12_export_last_close;
+    data[25]=raw12_single_source;
+    data[26]=raw12_single_sequence;
+    data[27]=raw12_single_fps_code;
+    data[28]=RH_BYTE(RH_MOVIE_ACTIVE);
+    data[29]=Z62_TARGET;
+    data[30]=~0x53323152u;
+    data[31]=raw12_hook_frames;
+    int file=raw12_status_open_unique();
+    raw12_export_last_open=(z62_u32)file;
+    if(file<0) return 1;
+    z62_u32 result=raw12_export_write(file,data,sizeof(data));
+    z62_u32 closed=RH_CALL(0x105c1749,z62_u32,int)(file);
+    raw12_export_last_write=result;
+    raw12_export_last_close=closed;
+    return result ? result : closed;
+}
+#endif
+
 static void raw12_single_step(void)
 {
     if(RH_BYTE(RH_MOVIE_ACTIVE)!=1) {
+#if Z62_RAW12_SINGLE_EXPORT
+        if(raw12_single_seen_recording && !raw12_single_status_written) {
+            if(++raw12_single_export_wait<200) return;
+            if(raw12_single_buffer && raw12_single_state==2 && !raw12_single_export_attempted) {
+                raw12_single_export_attempted=1;
+                raw12_export_write_frame();
+            }
+            raw12_single_status_result=raw12_write_status();
+            raw12_single_status_written=1;
+        }
+#endif
         raw12_single_release();
         raw12_single_state=0;
         raw12_single_wait=0;
@@ -99,6 +296,12 @@ static void raw12_single_step(void)
     }
     if(raw12_single_state>=2) return;
     if(raw12_single_state==0) {
+#if Z62_RAW12_SINGLE_EXPORT
+        raw12_single_seen_recording=1;
+        raw12_single_status_written=0;
+        raw12_single_export_wait=0;
+        raw12_single_export_attempted=0;
+#endif
         if(!raw12_single_geometry()) {
             if(++raw12_single_wait>=100) {
                 raw12_single_state=4;
@@ -113,12 +316,12 @@ static void raw12_single_step(void)
             return;
         }
         raw12_single_buffer=(unsigned char *)(((z62_u32)raw12_single_allocation+63u)&~63u);
-        raw12_single_sequence=raw12_hook_notifications;
+        raw12_single_sequence=raw12_hook_frames;
         raw12_single_state=1;
         return;
     }
-    if(raw12_single_sequence==raw12_hook_notifications) return;
-    z62_u32 sequence=raw12_hook_notifications;
+    if(raw12_single_sequence==raw12_hook_frames) return;
+    z62_u32 sequence=raw12_hook_frames;
     z62_u32 source=RH_WORD(0x20380310u);
     z62_u32 dimensions=RH_WORD(0x20380048u);
     if(!raw12_single_ram(source,raw12_single_frame_bytes) || dimensions!=(raw12_single_width<<16|raw12_single_height) ||
@@ -130,7 +333,8 @@ static void raw12_single_step(void)
     raw12_single_source=source;
     RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source,raw12_single_frame_bytes);
     RH_CALL(0x1035d254,void *,void *,const void *,z62_u32)(raw12_single_buffer,(unsigned char *)source,raw12_single_frame_bytes);
-    if(sequence==raw12_hook_notifications && source==RH_WORD(0x20380310u)) {
+    if(sequence==raw12_hook_frames && source==RH_WORD(0x20380310u)) {
+        raw12_single_sequence=sequence;
         raw12_single_state=2;
         ++raw12_single_captured;
     } else {
