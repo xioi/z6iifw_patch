@@ -25,6 +25,8 @@ def main():
                         help='QEMU-only prototype; known to crash a real camera during recording')
     parser.add_argument('--raw12-hook-only', action='store_true',
                         help='diagnose only the MIPU hook; no RAW reads, buffers, menus or files')
+    parser.add_argument('--raw12-single-frame', action='store_true',
+                        help='copy one frame to memory per recording; no files, menus or retries')
     parser.add_argument('--focus-probe', action='store_true',
                         help='enable focus diagnostics; implies --portrait')
     parser.add_argument('--output', type=Path, default=Path('artifacts/Z62APP.BIN'),
@@ -34,21 +36,22 @@ def main():
     args = parser.parse_args()
 
     if not (args.portrait or args.evf or args.movie or args.video_rotation or args.raw12 or
-            args.raw12_hook_only or args.focus_probe):
-        parser.error('select at least one feature: --portrait, --evf, --movie, --video-rotation, --raw12, --raw12-hook-only or --focus-probe')
-    if args.raw12 and args.raw12_hook_only:
-        parser.error('--raw12 and --raw12-hook-only are mutually exclusive')
+            args.raw12_hook_only or args.raw12_single_frame or args.focus_probe):
+        parser.error('select at least one feature: --portrait, --evf, --movie, --video-rotation, --raw12, --raw12-hook-only, --raw12-single-frame or --focus-probe')
+    if (args.raw12+args.raw12_hook_only+args.raw12_single_frame)>1:
+        parser.error('--raw12, --raw12-hook-only and --raw12-single-frame are mutually exclusive')
 
     portrait = args.portrait or args.evf or args.focus_probe
     configuration = dict(portrait=portrait, evf=args.evf, movie=args.movie,
                          video_rotation=args.video_rotation, raw12=args.raw12,
-                         raw12_hook_only=args.raw12_hook_only,
+                         raw12_hook_only=args.raw12_hook_only, raw12_single_frame=args.raw12_single_frame,
                          focus_probe=args.focus_probe, histogram=False)
     defines = [f'Z62_WITH_PORTRAIT={int(portrait)}',
                f'Z62_WITH_MOVIE={int(args.movie)}',
                f'Z62_WITH_MOVIE_ROTATION={int(args.video_rotation)}',
                f'Z62_WITH_RAW12={int(args.raw12)}',
-               f'Z62_WITH_RAW12_HOOK_ONLY={int(args.raw12_hook_only)}',
+               f'Z62_WITH_RAW12_HOOK_ONLY={int(args.raw12_hook_only or args.raw12_single_frame)}',
+               f'Z62_RAW12_SINGLE_FRAME={int(args.raw12_single_frame)}',
                f'Z62_EVF_PORTRAIT={int(args.evf)}']
     if args.focus_probe:
         defines.append('Z62_FOCUS_PROBE=1')
