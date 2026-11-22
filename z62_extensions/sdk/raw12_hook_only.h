@@ -39,6 +39,8 @@ static z62_u32 raw12_rawout_ready_sequence;
 static z62_u32 raw12_rawout_sequence;
 static z62_u32 raw12_rawout_seen_ctl;
 static z62_u32 raw12_rawout_seen_address;
+static z62_u32 raw12_rawout_bad_row;
+static z62_u32 raw12_rawout_bad_word;
 #endif
 
 static z62_u32 raw12_hook_rom_function(z62_u32 address)
@@ -348,8 +350,8 @@ static z62_u32 raw12_write_status(void)
     data[24]=raw12_export_last_close;
 #if Z62_RAW12_RAWOUT_SINGLE
     if(Z62_RAW12_RAWOUT_SINGLE && raw12_single_state!=2) {
-        data[23]=raw12_rawout_seen_ctl;
-        data[24]=raw12_rawout_seen_address;
+        data[23]=raw12_dual_error==0x2306 ? raw12_rawout_bad_row : raw12_rawout_seen_ctl;
+        data[24]=raw12_dual_error==0x2306 ? raw12_rawout_bad_word : raw12_rawout_seen_address;
     }
 #endif
     if(Z62_RAW12_DUAL_FRAME && raw12_single_state==3) {
@@ -487,6 +489,11 @@ static void raw12_dual_step(void)
 }
 
 #if Z62_RAW12_RAWOUT_SINGLE
+static z62_u32 raw12_rawout_sentinel(z62_u32 row,z62_u32 word)
+{
+    return 0xa5000000u|((row&0xffffu)<<4)|word;
+}
+
 static void raw12_rawout_disarm(void)
 {
     if(raw12_rawout_armed) {
@@ -528,8 +535,21 @@ static void raw12_rawout_step(void)
             if(++raw12_single_export_wait<200) return;
             if(raw12_single_buffer && raw12_single_state==2 && !raw12_single_export_attempted) {
                 RH_CALL(0x1034bde9,void,void *,z62_u32)(raw12_single_buffer,raw12_single_frame_bytes);
-                raw12_single_export_attempted=1;
-                raw12_export_write_frame();
+                for(z62_u32 row=0;row<raw12_single_height && raw12_rawout_bad_row==~0u;++row)
+                    for(z62_u32 word=0;word<4;++word)
+                        if(RH_WORD((z62_u32)raw12_single_buffer+row*raw12_single_pitch+word*4)==raw12_rawout_sentinel(row,word)) {
+                            raw12_rawout_bad_row=row;
+                            raw12_rawout_bad_word=RH_WORD((z62_u32)raw12_single_buffer+row*raw12_single_pitch+word*4);
+                            break;
+                        }
+                if(raw12_rawout_bad_row!=~0u) {
+                    raw12_dual_error=0x2306;
+                    raw12_single_state=4;
+                    ++raw12_single_rejected;
+                } else {
+                    raw12_single_export_attempted=1;
+                    raw12_export_write_frame();
+                }
             }
             raw12_single_status_result=raw12_write_status();
             raw12_single_status_written=1;
@@ -577,6 +597,12 @@ static void raw12_rawout_step(void)
         raw12_rawout_done=0;
         raw12_rawout_seen_ctl=0;
         raw12_rawout_seen_address=0;
+        raw12_rawout_bad_row=~0u;
+        raw12_rawout_bad_word=0;
+        for(z62_u32 row=0;row<raw12_single_height;++row)
+            for(z62_u32 word=0;word<4;++word)
+                RH_WORD((z62_u32)raw12_single_buffer+row*raw12_single_pitch+word*4)=raw12_rawout_sentinel(row,word);
+        RH_CALL(0x1034bdad,void,void *,z62_u32)(raw12_single_buffer,raw12_single_frame_bytes);
         RH_WORD(0x203803ecu)=(z62_u32)raw12_single_buffer;
         RH_WORD(0x203803f0u)=raw12_single_pitch;
         raw12_single_sequence=raw12_hook_frames;

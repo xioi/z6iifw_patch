@@ -191,12 +191,13 @@ Hook-only 模块 SHA-256 `d67102a289533c1a5e5d40f0635dfd542449e6725ad5c86e3364a0
 
 ```sh
 python3 hmp.py quit
-MODULE=/absolute/path/to/Z62APP.BIN bash out/raw12_qemu/start.sh
+export MODULE=/absolute/path/to/Z62APP.BIN
+bash out/raw12_qemu/start.sh
 ```
 
 `start.sh` 使用 `out/raw12_qemu/flash.img` 和 `card.img`，把模块复制为卡根目录的 `Z62APP.BIN`，并设置 `EXPEED_SCENE=out/scene_canoe.bin`、`EXPEED_IIP_PIXELS=1`、`EXPEED_H264=fe`、`EXPEED_H264_ENCODE=1`。HMP 为 `127.0.0.1:4444`，VNC 为 `:2`。更改这些输入时必须同时记录新脚本和环境。
 
-看到 `boot completed` 后，额外等待 **12 秒墙钟时间**，先确认宿主加载状态，再输入按键。以下代码通过运行时指针读取状态，并把模块基址保存为后续 dump 的输入：
+看到 `boot completed` 后，额外等待 **12 秒墙钟时间**，先确认宿主加载状态，再输入按键。**这 12 秒必须从出现启动完成提示后开始，不能从启动命令开始计时。** 已有从启动命令计时导致尚未正常起流就发送按键、最终帧通知全为零的无效运行。以下代码通过运行时指针读取状态，并把模块基址保存为后续 dump 的输入：
 
 ```sh
 sleep 12
@@ -219,19 +220,47 @@ print(hex(state), hex(image), status, result)
 PY
 ```
 
-然后按已验证时序操作：`v` 切到视频，等待 5 秒；`r` 开始录像，等待 4 秒；`r` 停止，再等待至少 9 秒让原厂文件任务退出。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
+然后执行 `v` 切到视频，等待 5 秒。对 RAW12/Hook-only 实验，开始录像前必须读取当前模块符号表中的 `raw12_hook_frames`，间隔 1 秒读取两次并确认计数增长；若为 0 或不再增长，本次不能用于评价捕获算法：
+
+```sh
+python3 hmp.py 'sendkey v'
+sleep 5
+python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+import struct
+import time
+from hmp import hmp
+out = Path('out/raw12_qemu').resolve()
+module = Path(os.environ['MODULE'])
+symbols = json.loads(module.with_suffix(module.suffix + '.json').read_text())['symbols']
+image = int(json.loads((out / 'module-state.json').read_text())['image'], 16)
+address = image + symbols['raw12_hook_frames']
+def counter():
+    hmp([f'memsave {address:#x} 4 "{out / "frame-counter.bin"}"'], settle=1)
+    return struct.unpack('<I', (out / 'frame-counter.bin').read_bytes())[0]
+first = counter()
+time.sleep(1)
+second = counter()
+print('frame counter:', first, second)
+assert second > first, 'No advancing MIPU frames; not a valid recording test'
+PY
+```
+
+只有上述检查通过才执行 `r` 开始录像，等待 4 秒；再用 `r` 停止，等待至少 9 秒让原厂文件任务退出。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
 
 ```sh
 python3 - <<'PY'
 import time
 from hmp import hmp
-for key, delay in [('v', 5), ('r', 4), ('r', 9)]:
+for key, delay in [('r', 4), ('r', 9)]:
     hmp(['sendkey ' + key], settle=1)
     time.sleep(delay)
 PY
 ```
 
-`v` 是照片/视频选择杆，`r` 是录像按钮，不是通用 QEMU 快捷键。若 `raw12_hook_notifications` 和 `raw12_hook_frames` 都保持 0，或没有 `R12Sxxx.BIN`，先检查等待时间、`LOADED=11`、模块返回值和原厂录像是否实际启动；此时不能评价捕获算法。已有一轮过早操作得到全零通知和无状态文件，重新按上述基线启动后才得到有效的分配失败诊断。
+`v` 是照片/视频选择杆，`r` 是录像按钮，不是通用 QEMU 快捷键。若没有新的 `R12Sxxx.BIN`，还要检查原厂录像是否实际启动。不能只根据按键日志或 `LOADED=11` 宣称录像/捕获成功。若模块清单没有某个被编译器优化的局部计数符号，不要假定它仍存在；应读取实际符号或当前状态文件，不要让诊断脚本的 `KeyError` 中断录像流程。
 
 读取主核内存必须使用 HMP **`memsave` 虚拟地址**，不能使用 `pmemsave` 代替：当前模型中后者对相关 RAM 返回全零占位。模块各变量偏移从当前 `.BIN.json` 的 `symbols` 获取，基址使用上一步保存的 `image`，不要硬编码旧基址。模块加载状态的 `+32/+36/+40` 分别为 `image/status/module_result`。记录 dump 对应的模块哈希，避免混用旧符号表。
 
@@ -291,15 +320,20 @@ ffmpeg -v error -i out/raw12_qemu/check.MOV -f null -
 该实验需要显式设置 `EXPEED_RAWOUT_PRIVATE=1`，才允许流 RAWOUT 写入上述 RTOS 区；默认行为和其他 DMA 守卫不变。此开关只用于私有缓冲模型实验，不是通用关闭安全检查：
 
 ```sh
-EXPEED_RAWOUT_PRIVATE=1 MODULE=/absolute/path/to/Z62APP-rawout-single.BIN \
-  bash out/raw12_qemu/start.sh
+export EXPEED_RAWOUT_PRIVATE=1
+export MODULE=/absolute/path/to/Z62APP-rawout-single.BIN
+bash out/raw12_qemu/start.sh
 ```
 
 RAWOUT 单帧模块 SHA-256 `437b5d0f6cd5af258d4105e4ec5f0f3ffa88913a15a97356c72df1b6bd3442b2`，从录像开始后第 4 个帧完成事件起再检查几何并分配一个私有缓冲，设置 `RAWOUT_ADDR=buffer`、`RAWOUT_PITCH=3040`，只切换 `RAWOUT_CTL` 的 bit0。帧完成回调在原生处理之后记录目标和序号并立即关闭 bit0，不执行整帧 CPU 复制、不打开文件。停止原厂录像约 2 秒后才使目标缓存失效并导出一个 Z12，然后释放内存。
 
 QEMU 实测 `state=2`、`captured=1`、`torn=0`、`rejected=0`、`exported=1`、帧完成时 `RAWOUT_CTL=3`，目标与私有缓冲地址一致。`R12S011.BIN` 无导出错误，两个分配指针在停止后归零。`RAW12005.Z12` SHA-256 为 `700e12a941495d5c5b5f2327a6a5e4ab13c36904e57c8df9e8b3f3a372aff98e`；导出的私有缓冲与 Z12 载荷逐字节相同，并与当前源地址每一行的 3,033 个有效打包字节完全一致。行尾 7 字节填充不属于像素，不参与该项比较。DNG 实际出图且与已验证单帧样本一致。同次 5.76 秒、1080p25 原厂 MOV 经 FFmpeg 完整解码通过。
 
-真机状态诊断使用 `data[22]`：`0x2301` 为完成时 RAWOUT 控制/目标不匹配，`0x2302` 为序号不是下一帧，`0x2303` 为几何变化，`0x2304` 为初始源无效或 RAWOUT 已占用，`0x2305` 为等待帧超时。**真机尚未验证 RAWOUT 的寄存器锁存时机和实际 DMA 数据，不能由上述模型结果推导为真机成功，更不能直接跳到连续写卡。**
+真机状态诊断使用 `data[22]`：`0x2301` 为完成时 RAWOUT 控制/目标不匹配，`0x2302` 为序号不是下一帧，`0x2303` 为几何变化，`0x2304` 为初始源无效或 RAWOUT 已占用，`0x2305` 为等待帧超时。真机首次 RAWOUT 单帧测试生成了 `R12S000.BIN` 和 `RAW12000.Z12`：状态为 `captured=1`、`torn=0`、`rejected=0`、`exported=1`、无导出错误，帧序号 `0x73`，源地址 `0x85d1b800`。Z12 SHA-256 为 `ee3e7b3578875180df85ff90c6b0101a982ccb0df4fff9f9dfe4a5f4f9bd651c`，但 DNG 实际显示为异常高频量化纹理，与此前已验证的真机 RAW 明显不同，**不计为像素或真机功能通过**。
+
+下一版在每行开头写入包含行号和字序的 16 字节唯一哨兵，DMA 前清理私有缓冲缓存，停止后先使缓存失效再检查所有行。若仍有哨兵，报 `0x2306`，`data[23]/data[24]` 保存首个未覆盖行号及其实际字，拒绝导出。只有所有哨兵被覆盖才写 Z12，之后仍须实际出图验证。该实验用于区分未发生 DMA 写入与 RAWOUT 格式/锁存时机问题；不得直接跳到连续写卡。
+
+哨兵版 SHA-256 `84acd33c3c29639b868dfbc50e8f36686e32558e5d2916334943a5ae08b2b56c` 已在 QEMU 按更新后的门槛复验：启动完成提示后等待，再确认帧计数 `6735→6834` 增长后才录像。结果为 `captured=1`、`bad_row=0xffffffff`、`export_attempted=1`、`exported=1`，无拒绝或导出错误。所有 1138 行的哨兵均被覆盖，私有缓冲与 Z12 载荷一致，每行 3,033 个有效字节与源数据相同。`R12S012.BIN` 状态有效，Z12 SHA-256 为 `ff14804398eadecd6dd3467fe780730782358829dc9c40e3896e7b52fad3b71d`；同次 6.12 秒原厂 MOV 完整解码通过。下一步只验证真机 DMA 覆盖与真实画面，不宣称双帧或连续 RAW 已实现。
 
 ## 验证边界
 
