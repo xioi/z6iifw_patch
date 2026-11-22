@@ -9,6 +9,7 @@
 
 # Build products
 artifacts/
+.venv/
 __pycache__/
 *.pyc
 
