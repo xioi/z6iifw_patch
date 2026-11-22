@@ -40,6 +40,8 @@ v02 保留相同的基础补偿、灰点增益和 N-Log 正向曲线，只在曲
 
 因此阴影分配增至约 94 个码值，高光增至约 138 个码值，均比 v01 增加约 57%。中间灰从 93 提升到 104，是为了 8bit 可用性做出的曝光妥协，不再追求逐码值模拟 N-Log。
 
+后续同场景对比 `nlogv1_1.jpg` 和 `nlogv2_1.jpg` 显示，v02 虽然更亮、更容易直接观看，但高光余量更少，整体更接近可调亮的 Flat。继续在 Picture Control 两端折中收益有限，因此该方向在此收敛，不再继续生成 v03；后续研究转向原生 MIPU/N-Log ISP 路径。
+
 ## 曲线生成方法
 
 使用 [NikonPictureControlsDev](https://github.com/horshack-dpreview/NikonPictureControlsDev) 的 `Horshack_RawLinear.NCP` 作为数学模板。该模板用于补偿 Neutral 基础曲线及 sRGB 1/2.4 gamma；生成器保留其容器和输入响应，把每个线性 RAW 输出值送入尼康官方 N-Log 正向公式。
