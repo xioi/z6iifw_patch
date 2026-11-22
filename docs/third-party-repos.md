@@ -15,7 +15,8 @@
 
 | 仓库 | 主要价值 | 可用性与限制 |
 |------|----------|--------------|
-| [simeonpilgrim/nikon-firmware-tools](https://github.com/simeonpilgrim/nikon-firmware-tools) | NikonHacker 经典工具集；`Firmware.cs` 提供旧式固件 XOR 解码表和格式线索。`qemu-expeed` 的解包脚本明确以其为基础 | 面向 D5100/D7000 等老机型，**不是 Z6II 的现成补丁器**。对当前项目主要是解码和格式研究基础，不能单独解决新固件签名。 |
+| [horshack-dpreview/NikonPictureControlsDev](https://github.com/horshack-dpreview/NikonPictureControlsDev) | NCP 容器、基础 TRC 与用户 256 项 LUT 的域说明，提供 RawLinear 数学模板 | 用于生成实验性 NLOG8；不是尼康官方工具，Neutral 补偿为近似，导入和色调仍需 Z6II 真机验证。 |
+| [simeonpilgrim/nikon-firmware-tools](https://github.com/simeonpilgrim/nikon-firmware-tools) | NikonHacker 经典工具集；`Firmware.cs` 提供旧式固件 XOR 解码表和格式线索，`dumpncp.pl` 可独立解析 NCP。`qemu-expeed` 的解包脚本明确以其为基础 | 面向 D5100/D7000 等老机型，**不是 Z6II 的现成补丁器**。对当前项目主要是解码、NCP 校验和格式研究基础，不能单独解决新固件签名。 |
 | [XinmiaoZhao/NikonFirmwarePatch](https://github.com/XinmiaoZhao/NikonFirmwarePatch) | Z8 功能补丁、输入校验、K8 签名/验证和发布清单的实现参考 | 当前上游工具面向 **Z8 C 3.11** 的 ProRes、预拍摄、像素位移、开放门/N-RAW 等功能。**不是通用 Nikon 补丁工具，也不支持直接生成 Z6II 固件。** |
 | [youyli03/z5mod](https://github.com/youyli03/z5mod) | 展示“固件宿主 + SD 卡 C 模块”的两层结构、模块校验和构建方法 | 目标是 **Z5 C 1.50**，其 `Z5APP.BIN`、A 盘路径和 MY MENU 激活机制不能直接套到 Z6II。适合学习架构；当前 Z6II 加载器实际以 Z7II 项目为主要移植基础。 |
 
@@ -44,6 +45,7 @@
 ```text
 JKWTCN/z7ii-extensions       9ddc447789cf（本地基线）；e507523a8bc0（视频方向参考）
 abaeyens/qemu-expeed         0d8476d245f9
+horshack-dpreview/NikonPictureControlsDev 1777cbe31572
 simeonpilgrim/nikon-firmware-tools  89ad7354b6d7
 XinmiaoZhao/NikonFirmwarePatch      cd1e46332c5e
 youyli03/z5mod               8a1bfdca4a06
