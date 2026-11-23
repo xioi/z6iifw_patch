@@ -248,7 +248,7 @@ assert second > first, 'No advancing MIPU frames; not a valid recording test'
 PY
 ```
 
-只有上述检查通过才执行 `r` 开始录像。开始 1 秒后必须确认 `MOVIE_ACTIVE` 的字节值为 1，再继续录到约 4 秒；若为 0，此次运行无效，不能用帧计数增长代替录像激活。随后用 `r` 停止，等待至少 9 秒让原厂文件任务退出。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
+只有上述检查通过才执行一次 `r` 开始录像。随后每秒读取一次 `MOVIE_ACTIVE`，最多等待 **15 秒**，直到字节值变为 1；不能固定等 1 秒就判定未激活，也不能因暂时为 0 而反复按键（会产生多段录像）。确认激活后再继续录到约 4 秒，用 `r` 停止并等待至少 9 秒。若从未观察到 1，就不发送额外的停止键，本次运行判为无效。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
 
 ```sh
 python3 - <<'PY'
@@ -258,9 +258,13 @@ import time
 from hmp import hmp
 out = Path('out/raw12_qemu').resolve()
 hmp(['sendkey r'], settle=1)
-time.sleep(1)
-hmp([f'memsave 0xc18117a8 4 "{out / "movie-active.bin"}"'], settle=1)
-active = struct.unpack('<I', (out / 'movie-active.bin').read_bytes())[0] & 0xff
+active = 0
+for _ in range(15):
+    time.sleep(1)
+    hmp([f'memsave 0xc18117a8 4 "{out / "movie-active.bin"}"'], settle=1)
+    active = struct.unpack('<I', (out / 'movie-active.bin').read_bytes())[0] & 0xff
+    if active == 1:
+        break
 print('MOVIE_ACTIVE:', active)
 assert active == 1, 'Recording did not start; not a valid capture test'
 time.sleep(3)
@@ -377,6 +381,16 @@ QEMU 候选 SHA-256 `34d0657be1796ae81f145e8df4f7628e0cdfbb6e75e9fa40f5d6dfc2247
 **同一模块已在真机普通 1080p30 通过单帧验证。** `R12S000.BIN` 为 `state=2`、`captured=1`、`torn=0`、`rejected=0`、`export_attempted=1`、`exported=1`、无导出错误；帧序号 `0x57`、源地址 `0x85d1b800`。`RAW12000.Z12` SHA-256 为 `46d29ee2e57f6a70972accb00ff0a2409af583e1e0c6aa04b7dd1c9a832f021c`，解包样本范围 252–4095、均值 611.311、3,844 个不同码值。DNG 已实际出图，可辨认真实桌面场景，DNG 与 Z12 解包像素的 SHA-256 均为 `9c7ba9895c2d6ad6fc96081a5707e1a2565145510c1cff60f0df0f9b45ece7b2`。DNG 仍使用未校准恒等色彩矩阵，暗绿色预览不代表已完成色彩校准。
 
 这一结果证明完整的 XDMAC 描述符配置、CPU 半帧、原生完成中断和停止后导出可在所测真机短录中工作，冻结为新的 DMA 单帧基线。它不证明双帧、连续复制或并发写卡安全；后续扩展必须继续保持独立缓冲、帧完整性检查和停止后导出。
+
+### DMA 连续两帧
+
+在真机单帧基线之上，`--raw12-dma-dual` 使用两块独立内存，逐帧复用同一套 DMA 半帧＋CPU 半帧和完整描述符。第二帧序号必须等于第一帧加一，通道每次使用后恢复，停止后分别验证两块缓冲的全部哨兵；任一失败都不导出。第二帧哨兵错误为 `0x2408`，第一帧仍为 `0x2406`。
+
+QEMU 模块 SHA-256 `ea45a168db060fbbba77b033c2ed590b94dfde5754f8892adc61937ae38eb7b2` 产生 `R12S018.BIN`：`state=2`、`captured=2`、`torn=0`、`rejected=0`、`export_attempted=1`、`exported=1`，两块申请第一轮成功，`data[25]=0x00010000`。`RAW12010.Z12` 为 6,919,136 字节，序号 `0x12a2/0x12a3` 连续，两个源地址均为 `0x82c00000`，两个帧载荷 SHA-256 均为已验证的 `66da6079dcee35c6371d6af71cf72d86dbc5e9d58f06b05e3b7f83553361edeb`。Z12 SHA-256 为 `1d490e3f3361f915879876c59135d3fdf74ebcf18cf31ebe538c7b1ded912217`，两个 DNG 均实际出图且一致，符合静态场景预期。该轮两个原厂 MOV（8.40 秒和 20.40 秒）均完整解码通过；多次触发产生的两段文件不作为严格单次时序证明。
+
+固定 1 秒检查曾得到 `MOVIE_ACTIVE=0`，但随后实际启动并生成双帧文件，因此启动等待已改为最多 15 秒轮询，未观察到激活时不追加停止键。真机双帧尚未验证，连续 RAW 写卡仍未恢复。
+
+共享目标缓冲后的单帧回归模块 SHA-256 `a74db84633d81b1ad55c64c4276b9250657b0685237f6f5e8a2cb95d76aa83c5` 也通过 QEMU：`captured=1`、`torn=0`、`rejected=0`、`exported=1`，完整私有帧、源帧和 Z12 逐字节一致，Z12 SHA-256 为 `a1aa6c526ee7c8815256b9936e4c353bb99aea1e683e006107bc4bee28c177f7`，同次 6.60 秒原厂 MOV 完整解码通过。已通过真机的单帧基线文件不因此替换；双帧实验使用独立测试目录。
 
 ## 验证边界
 

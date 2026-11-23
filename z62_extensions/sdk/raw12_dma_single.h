@@ -2,7 +2,7 @@
 #ifndef Z62_RAW12_DMA_SINGLE_H
 #define Z62_RAW12_DMA_SINGLE_H
 
-#if Z62_RAW12_DMA_SINGLE
+#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL
 #define RD_XDACS 0x04251000u
 #define RD_CHANNEL (0x04251000u+3u*0x30u)
 #define RD_LEN (RD_CHANNEL+0x10u)
@@ -19,6 +19,7 @@
 static z62_u32 raw12_dma_active;
 static z62_u32 raw12_dma_ready_sequence;
 static z62_u32 raw12_dma_saved[7];
+static unsigned char *raw12_dma_destination;
 
 static z62_u32 raw12_dma_sentinel(z62_u32 row,z62_u32 word)
 {
@@ -88,12 +89,12 @@ static void raw12_dma_capture(void)
     RH_WORD(RD_CONFIG2)=0;
     RH_WORD(RD_LEN)=half-1u;
     RH_WORD(RD_SRC)=source+half;
-    RH_WORD(RD_DST)=(z62_u32)raw12_single_buffer+half;
+    RH_WORD(RD_DST)=(z62_u32)raw12_dma_destination+half;
     RH_WORD(RD_STAT)=0;
     RH_BYTE(RD_RESULT)=0;
     RH_WORD(RD_GO)=0x11109003u;
     RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source,half);
-    RH_CALL(0x1035d254,void *,void *,const void *,z62_u32)(raw12_single_buffer,(const void *)source,half);
+    RH_CALL(0x1035d254,void *,void *,const void *,z62_u32)(raw12_dma_destination,(const void *)source,half);
     z62_u32 error=0;
     if(sequence!=raw12_hook_frames || source!=RH_WORD(0x20380310u)) {
         error=sequence!=raw12_hook_frames ? 0x2211 : 0x2221;
@@ -123,10 +124,13 @@ static void raw12_dma_capture(void)
         return;
     }
     raw12_single_sequence=sequence;
+#if Z62_RAW12_DMA_SINGLE
     raw12_single_captured=1;
     raw12_single_state=2;
+#endif
 }
 
+#if Z62_RAW12_DMA_SINGLE
 static void raw12_dma_single_step(void)
 {
     if(RH_BYTE(RH_MOVIE_ACTIVE)!=1) {
@@ -181,6 +185,7 @@ static void raw12_dma_single_step(void)
             return;
         }
         raw12_single_buffer=(unsigned char *)(((z62_u32)raw12_single_allocation+63u)&~63u);
+        raw12_dma_destination=raw12_single_buffer;
         for(z62_u32 row=0;row<raw12_single_height;++row)
             for(z62_u32 word=0;word<4;++word)
                 RH_WORD((z62_u32)raw12_single_buffer+row*raw12_single_pitch+word*4)=raw12_dma_sentinel(row,word);
@@ -192,5 +197,6 @@ static void raw12_dma_single_step(void)
     }
     if(raw12_single_sequence!=raw12_hook_frames) raw12_dma_capture();
 }
+#endif
 #endif
 #endif
