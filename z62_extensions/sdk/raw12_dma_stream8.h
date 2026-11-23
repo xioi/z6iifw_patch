@@ -2,10 +2,11 @@
 #ifndef Z62_RAW12_DMA_STREAM8_H
 #define Z62_RAW12_DMA_STREAM8_H
 
-#if Z62_RAW12_DMA_STREAM8
+#if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
 #define RS_LOAD(p) __atomic_load_n(p,__ATOMIC_ACQUIRE)
 #define RS_STORE(p,v) __atomic_store_n(p,v,__ATOMIC_RELEASE)
 #define RS_SLOTS 8u
+#define RS_TOTAL (Z62_RAW12_DMA_STREAM16 ? 16u : 8u)
 
 static z62_u32 raw12_stream_task[8];
 static unsigned char raw12_stream_descriptor[28];
@@ -73,7 +74,7 @@ static void raw12_stream_finish(void)
     raw12_stream_file=-1;
     if(RS_LOAD(&raw12_stream_writer_error) || closed) {
         ++raw12_single_export_errors;
-    } else if(RS_LOAD(&raw12_stream_write_index)==8) {
+    } else if(RS_LOAD(&raw12_stream_write_index)==RS_TOTAL) {
         ++raw12_single_exported;
     }
     RS_STORE(&raw12_stream_writer_done,1);
@@ -99,15 +100,22 @@ static void raw12_stream_writer(void *ignored)
         z62_u32 index=RS_LOAD(&raw12_stream_write_index);
         z62_u32 captured=RS_LOAD(&raw12_single_captured);
         z62_u32 done=RS_LOAD(&raw12_stream_capture_done);
-        if(index>=8 || (done && index>=captured)) {
+        if(index>=RS_TOTAL || (done && index>=captured)) {
             raw12_stream_finish();
             RH_CALL(0x103dec95,void,z62_u32)(2);
             continue;
         }
+#if Z62_RAW12_DMA_STREAM16
+        if(!captured || index>=captured) {
+            RH_CALL(0x103dec95,void,z62_u32)(1);
+            continue;
+        }
+#else
         if(captured<4 || index>=captured) {
             RH_CALL(0x103dec95,void,z62_u32)(1);
             continue;
         }
+#endif
         if(raw12_stream_file<0) {
             raw12_stream_file=raw12_export_open_unique();
             raw12_export_last_open=(z62_u32)raw12_stream_file;
@@ -129,10 +137,17 @@ static void raw12_stream_writer(void *ignored)
             continue;
         }
         RS_STORE(&raw12_stream_slots[slot],3);
+#if Z62_RAW12_DMA_STREAM16
+        if(index==0 && !raw12_stream_verify(raw12_stream_buffers[slot])) {
+            raw12_stream_fail(0x2500u|slot);
+            continue;
+        }
+#else
         if(!raw12_stream_verify(raw12_stream_buffers[slot])) {
             raw12_stream_fail(0x2500u|slot);
             continue;
         }
+#endif
         raw12_export_frame[0]=0x46323152u;
         raw12_export_frame[1]=raw12_stream_sequences[slot];
         raw12_export_frame[2]=raw12_single_frame_bytes;
@@ -149,6 +164,67 @@ static void raw12_stream_writer(void *ignored)
     }
 }
 
+#if Z62_RAW12_DMA_STREAM16
+static z62_u32 raw12_probe_events[32][16];
+static z62_u32 raw12_probe_copies[16][16];
+static z62_u32 raw12_probe_event_count;
+static z62_u32 raw12_probe_copy_count;
+
+static void raw12_probe_event(z62_u32 status)
+{
+    z62_u32 index=raw12_probe_event_count;
+    if(index>=32) return;
+    for(z62_u32 i=0;i<16;++i) raw12_probe_events[index][i]=0;
+    raw12_probe_events[index][0]=raw12_hook_frames;
+    raw12_probe_events[index][1]=RH_WORD(0x04266008u);
+    raw12_probe_events[index][2]=RH_WORD(0x20380310u);
+    raw12_probe_events[index][3]=status;
+    raw12_probe_event_count=index+1;
+}
+
+static void raw12_probe_capture(void)
+{
+    z62_u32 index=raw12_probe_copy_count;
+    if(index>=16) return;
+    for(z62_u32 i=0;i<16;++i) raw12_probe_copies[index][i]=0;
+    z62_u32 source=RH_WORD(0x20380310u);
+    raw12_probe_copies[index][0]=raw12_hook_frames;
+    raw12_probe_copies[index][1]=RH_WORD(0x04266008u);
+    raw12_probe_copies[index][2]=source;
+    raw12_probe_copies[index][3]=raw12_hook_last_status;
+    for(z62_u32 group=0;group<3;++group) {
+        z62_u32 offset=group==0 ? 0 : group==1 ? raw12_single_frame_bytes/2u : raw12_single_frame_bytes-16u;
+        RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source+offset,16);
+        for(z62_u32 word=0;word<4;++word)
+            raw12_probe_copies[index][4+group*4+word]=RH_WORD(source+offset+word*4);
+    }
+    raw12_probe_copy_count=index+1;
+}
+
+static void raw12_probe_write(void)
+{
+    if(!raw12_probe_event_count) return;
+    _Alignas(64) z62_u32 header[16];
+    for(z62_u32 i=0;i<16;++i) header[i]=0;
+    header[0]=0x50323152u;
+    header[1]=1;
+    header[2]=raw12_probe_event_count;
+    header[3]=raw12_probe_copy_count;
+    header[4]=raw12_single_frame_bytes;
+    header[5]=48000000;
+    header[6]=raw12_single_captured;
+    header[7]=raw12_dual_error;
+    header[15]=~0x50323152u;
+    int file=raw12_status_open_unique(1);
+    if(file<0) return;
+    z62_u32 result=raw12_export_write(file,header,64);
+    if(!result) result=raw12_export_write(file,raw12_probe_events,sizeof(raw12_probe_events));
+    if(!result) result=raw12_export_write(file,raw12_probe_copies,sizeof(raw12_probe_copies));
+    raw12_export_last_write=result;
+    raw12_export_last_close=RH_CALL(0x105c1749,z62_u32,int)(file);
+}
+#endif
+
 static void raw12_dma_stream8_step(void)
 {
     if(RH_BYTE(RH_MOVIE_ACTIVE)!=1) {
@@ -162,6 +238,9 @@ static void raw12_dma_stream8_step(void)
                 else RS_STORE(&raw12_stream_writer_error,1);
                 return;
             }
+#if Z62_RAW12_DMA_STREAM16
+            raw12_probe_write();
+#endif
             raw12_single_status_result=raw12_write_status();
             raw12_single_status_written=1;
         }
@@ -191,6 +270,10 @@ static void raw12_dma_stream8_step(void)
         RS_STORE(&raw12_stream_writer_done,0);
         RS_STORE(&raw12_stream_writer_error,0);
         RS_STORE(&raw12_stream_write_index,0);
+#if Z62_RAW12_DMA_STREAM16
+        raw12_probe_event_count=0;
+        raw12_probe_copy_count=0;
+#endif
         for(z62_u32 i=0;i<RS_SLOTS;++i) RS_STORE(&raw12_stream_slots[i],0);
         if(!raw12_dma_ready_sequence) raw12_dma_ready_sequence=raw12_hook_frames+4;
         if(raw12_hook_frames<raw12_dma_ready_sequence) return;
@@ -248,7 +331,7 @@ static void raw12_dma_stream8_step(void)
         return;
     }
     z62_u32 index=RS_LOAD(&raw12_single_captured);
-    if(index>=8 || raw12_single_sequence==raw12_hook_frames) return;
+    if(index>=RS_TOTAL || raw12_single_sequence==raw12_hook_frames) return;
     z62_u32 slot=index&7u;
     if(RS_LOAD(&raw12_stream_slots[slot])!=0) {
         if(++raw12_single_wait>=200) {
@@ -262,6 +345,9 @@ static void raw12_dma_stream8_step(void)
     raw12_single_wait=0;
     RS_STORE(&raw12_stream_slots[slot],1);
     raw12_dma_destination=raw12_stream_buffers[slot];
+#if Z62_RAW12_DMA_STREAM16
+    raw12_probe_capture();
+#endif
     raw12_dma_capture();
     if(raw12_single_state>=3) {
         RS_STORE(&raw12_stream_slots[slot],0);
@@ -272,7 +358,7 @@ static void raw12_dma_stream8_step(void)
     raw12_stream_sources[slot]=raw12_single_source;
     RS_STORE(&raw12_stream_slots[slot],2);
     RS_STORE(&raw12_single_captured,index+1);
-    if(index==7) {
+    if(index==RS_TOTAL-1) {
         raw12_single_state=2;
         RS_STORE(&raw12_stream_capture_done,1);
     }

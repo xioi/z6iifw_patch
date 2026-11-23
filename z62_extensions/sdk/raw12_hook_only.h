@@ -27,6 +27,12 @@
 #ifndef Z62_RAW12_DMA_STREAM8
 #define Z62_RAW12_DMA_STREAM8 0
 #endif
+#ifndef Z62_RAW12_DMA_STREAM16
+#define Z62_RAW12_DMA_STREAM16 0
+#endif
+#if Z62_RAW12_DMA_STREAM16
+static void raw12_probe_event(z62_u32 status);
+#endif
 
 #define RH_WORD(a) (*(volatile z62_u32 *)(a))
 #define RH_BYTE(a) (*(volatile unsigned char *)(a))
@@ -54,13 +60,13 @@ static z62_u32 raw12_rawout_seen_address;
 static z62_u32 raw12_rawout_bad_row;
 static z62_u32 raw12_rawout_bad_word;
 #endif
-#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8
+#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
 static z62_u32 raw12_dma_go;
 static z62_u32 raw12_dma_stat;
 static z62_u32 raw12_dma_bad_row;
 static z62_u32 raw12_dma_bad_word;
 #endif
-#if Z62_RAW12_DMA_STREAM8
+#if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
 static z62_u32 raw12_stream_write_index;
 #endif
 
@@ -74,6 +80,9 @@ static z62_u32 raw12_hook_event(z62_u32 code,z62_u32 status)
     z62_u32 result=RH_CALL(raw12_hook_native,z62_u32,z62_u32,z62_u32)(code,status);
     ++raw12_hook_notifications;
     if(status&0x1000u) ++raw12_hook_frames;
+#if Z62_RAW12_DMA_STREAM16
+    if(RH_BYTE(RH_MOVIE_ACTIVE)==1) raw12_probe_event(status);
+#endif
 #if Z62_RAW12_RAWOUT_SINGLE
     if((status&0x1000u) && raw12_rawout_armed && (RH_WORD(0x203803e8u)&1u)) {
         raw12_rawout_seen_ctl=RH_WORD(0x203803e8u);
@@ -222,7 +231,11 @@ static z62_u32 raw12_export_write(int file,void *buffer,z62_u32 size)
     z62_u32 offset=0;
     while(offset<size) {
         z62_u32 count=size-offset,actual=0;
-        if(count>65536u) count=65536u;
+        z62_u32 limit=65536u;
+#if Z62_RAW12_DMA_STREAM16
+        limit=262144u;
+#endif
+        if(count>limit) count=limit;
         struct { z62_u32 kind; void *buffer; z62_u32 capacity; } request={1,(unsigned char *)buffer+offset,count};
         RH_CALL(0x1034bdad,void,void *,z62_u32)(request.buffer,count);
         z62_u32 result=RH_CALL(0x105c17e5,z62_u32,int,void *,z62_u32,z62_u32 *)(file,&request,count,&actual);
@@ -314,9 +327,10 @@ static void raw12_export_write_frame(void)
     if(result || closed) ++raw12_single_export_errors;
     else ++raw12_single_exported;
 }
-static int raw12_status_open_unique(void)
+static int raw12_status_open_unique(z62_u32 probe)
 {
     char path[16]={'B',':','\\','R','1','2','S','0','0','0','.','B','I','N',0,0};
+    if(probe) path[3]='P';
     z62_u32 start=raw12_status_next_name;
     for(z62_u32 n=0;n<1000;++n) {
         z62_u32 index=(start+n)%1000u;
@@ -362,14 +376,14 @@ static z62_u32 raw12_write_status(void)
         data[17]=raw12_dual_allocation_results[1];
     }
     data[18]=raw12_single_export_wait;
-#if Z62_RAW12_DMA_STREAM8
-    if(Z62_RAW12_DMA_STREAM8) data[18]=raw12_stream_write_index;
+#if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
+    if(Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16) data[18]=raw12_stream_write_index;
 #endif
     data[19]=raw12_single_export_attempted;
     data[20]=raw12_single_exported;
     data[21]=raw12_single_export_errors;
     data[22]=raw12_export_last_open;
-    if(Z62_RAW12_DUAL_FRAME || Z62_RAW12_RAWOUT_SINGLE || Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8) data[22]=raw12_dual_error;
+    if(Z62_RAW12_DUAL_FRAME || Z62_RAW12_RAWOUT_SINGLE || Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16) data[22]=raw12_dual_error;
     data[23]=raw12_export_last_write;
     data[24]=raw12_export_last_close;
 #if Z62_RAW12_RAWOUT_SINGLE
@@ -378,8 +392,8 @@ static z62_u32 raw12_write_status(void)
         data[24]=raw12_dual_error==0x2306 ? raw12_rawout_bad_word : raw12_rawout_seen_address;
     }
 #endif
-#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8
-    if((Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8) && raw12_single_state!=2) {
+#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
+    if((Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16) && raw12_single_state!=2) {
         z62_u32 sentinel=raw12_dual_error==0x2406 || raw12_dual_error==0x2408 || (raw12_dual_error&0xff00u)==0x2500u;
         data[23]=sentinel ? raw12_dma_bad_row : raw12_dma_go;
         data[24]=sentinel ? raw12_dma_bad_word : raw12_dma_stat;
@@ -394,14 +408,14 @@ static z62_u32 raw12_write_status(void)
     }
     data[25]=raw12_single_source;
     if(Z62_RAW12_DUAL_FRAME) data[25]=raw12_dual_retries|(raw12_dual_allocation_attempts<<16);
-    if(Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8) data[25]=raw12_dual_allocation_attempts<<16;
+    if(Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16) data[25]=raw12_dual_allocation_attempts<<16;
     data[26]=raw12_single_sequence;
     data[27]=raw12_single_fps_code;
     data[28]=RH_BYTE(RH_MOVIE_ACTIVE);
     data[29]=Z62_TARGET;
     data[30]=~0x53323152u;
     data[31]=raw12_hook_frames;
-    int file=raw12_status_open_unique();
+    int file=raw12_status_open_unique(0);
     raw12_export_last_open=(z62_u32)file;
     if(file<0) return 1;
     z62_u32 result=raw12_export_write(file,data,sizeof(data));
@@ -662,7 +676,7 @@ static void raw12_rawout_step(void)
 
 static void raw12_single_step(void)
 {
-#if Z62_RAW12_DMA_STREAM8
+#if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
     raw12_dma_stream8_step();
     return;
 #endif
@@ -769,7 +783,7 @@ static void raw12_hook_worker(void *ignored)
         if(RH_WORD(RH_MIPU_SLOT)==(z62_u32)raw12_hook_event) raw12_single_step();
 #endif
         z62_u32 delay=10;
-#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8
+#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
         if(raw12_single_state==1) delay=1;
 #endif
         RH_CALL(0x103dec95,void,z62_u32)(delay);
@@ -785,7 +799,7 @@ static z62_u32 raw12_hook_only_install(void)
     *(unsigned short *)(raw12_hook_descriptor+26)=0;
     RH_CALL(0x103debc7,int,void *,void (*)(void *),void *)(raw12_hook_task,raw12_hook_worker,raw12_hook_descriptor);
     if((int)raw12_hook_task[0]<=0) return 1;
-#if Z62_RAW12_DMA_STREAM8
+#if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
     for(z62_u32 i=0;i<28;++i) raw12_stream_descriptor[i]=original[i];
     raw12_stream_descriptor[0]=1;
     *(z62_u32 *)(raw12_stream_descriptor+8)=8192;
