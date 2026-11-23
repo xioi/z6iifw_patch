@@ -67,11 +67,7 @@ static z62_u32 raw12_hook_event(z62_u32 code,z62_u32 status)
 {
     z62_u32 result=RH_CALL(raw12_hook_native,z62_u32,z62_u32,z62_u32)(code,status);
     ++raw12_hook_notifications;
-#if Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4
-    if((status&0x1002u)==0x1002u) ++raw12_hook_frames;
-#else
     if(status&0x1000u) ++raw12_hook_frames;
-#endif
 #if Z62_RAW12_RAWOUT_SINGLE
     if((status&0x1000u) && raw12_rawout_armed && (RH_WORD(0x203803e8u)&1u)) {
         raw12_rawout_seen_ctl=RH_WORD(0x203803e8u);
