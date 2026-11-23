@@ -73,7 +73,8 @@ llvm-nm --version
 | `--video-rotation` | 普通内录 MOV/MP4 开档锁姿并写入视频轨方向矩阵 | 无，可独立构建 |
 | `--focus-probe` | 对焦属性和原生绘制诊断，生成 `FOCUSPROP.BIN` | 自动启用 `--portrait` |
 | `--raw12-dual-frame` | CPU 双帧诊断；真机第二帧复制超时撕裂，不再作为功能候选 | 无；保留失败诊断 |
-| `--raw12-rawout-single` | 研究中：MIPU RAWOUT DMA 单帧，停止原厂录像后导出 | 无；QEMU 已通过，真机待验证 |
+| `--raw12-rawout-single` | RAWOUT 写入诊断；真机中途启用未覆盖私有缓冲 | 无；不再作为功能候选 |
+| `--raw12-dma-single` | 研究中：XDMAC 通道 3 与 CPU 各复制半帧，停止后导出 | 无；QEMU 已通过，真机待验证 |
 | `--output PATH` | 指定模块输出路径 | 默认 `artifacts/Z62APP.BIN` |
 | `--force` | 替换旧模块及其配置清单 | 切换配置时显式指定 |
 

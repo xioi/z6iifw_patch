@@ -33,6 +33,8 @@ def main():
                         help='capture two consecutive frames in memory and export both after stopping')
     parser.add_argument('--raw12-rawout-single', action='store_true',
                         help='research one MIPU RAW-output DMA frame without a CPU frame copy')
+    parser.add_argument('--raw12-dma-single', action='store_true',
+                        help='research one frame split between XDMAC channel 3 and the CPU')
     parser.add_argument('--focus-probe', action='store_true',
                         help='enable focus diagnostics; implies --portrait')
     parser.add_argument('--output', type=Path, default=Path('artifacts/Z62APP.BIN'),
@@ -43,21 +45,22 @@ def main():
 
     if not (args.portrait or args.evf or args.movie or args.video_rotation or args.raw12 or
             args.raw12_hook_only or args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or
-            args.raw12_rawout_single or args.focus_probe):
+            args.raw12_rawout_single or args.raw12_dma_single or args.focus_probe):
         parser.error('select at least one feature, including the explicitly selected RAW12 research modes')
     if (args.raw12+args.raw12_hook_only+args.raw12_single_frame+args.raw12_single_export+args.raw12_dual_frame+
-        args.raw12_rawout_single)>1:
-        parser.error('the six RAW12 research modes are mutually exclusive')
+        args.raw12_rawout_single+args.raw12_dma_single)>1:
+        parser.error('the seven RAW12 research modes are mutually exclusive')
 
     portrait = args.portrait or args.evf or args.focus_probe
     configuration = dict(portrait=portrait, evf=args.evf, movie=args.movie,
                          video_rotation=args.video_rotation, raw12=args.raw12,
                          raw12_hook_only=args.raw12_hook_only, raw12_single_frame=args.raw12_single_frame,
                          raw12_single_export=args.raw12_single_export, raw12_dual_frame=args.raw12_dual_frame,
-                         raw12_rawout_single=args.raw12_rawout_single, focus_probe=args.focus_probe, histogram=False)
-    raw12_hook = args.raw12_hook_only or args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single
-    raw12_frame = args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single
-    raw12_export = args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single
+                         raw12_rawout_single=args.raw12_rawout_single, raw12_dma_single=args.raw12_dma_single,
+                         focus_probe=args.focus_probe, histogram=False)
+    raw12_hook = args.raw12_hook_only or args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single
+    raw12_frame = args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single
+    raw12_export = args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single
     defines = [f'Z62_WITH_PORTRAIT={int(portrait)}',
                f'Z62_WITH_MOVIE={int(args.movie)}',
                f'Z62_WITH_MOVIE_ROTATION={int(args.video_rotation)}',
@@ -67,6 +70,7 @@ def main():
                f'Z62_RAW12_SINGLE_EXPORT={int(raw12_export)}',
                f'Z62_RAW12_DUAL_FRAME={int(args.raw12_dual_frame)}',
                f'Z62_RAW12_RAWOUT_SINGLE={int(args.raw12_rawout_single)}',
+               f'Z62_RAW12_DMA_SINGLE={int(args.raw12_dma_single)}',
                f'Z62_EVF_PORTRAIT={int(args.evf)}']
     if args.focus_probe:
         defines.append('Z62_FOCUS_PROBE=1')

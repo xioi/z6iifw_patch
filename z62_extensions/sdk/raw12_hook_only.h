@@ -15,6 +15,9 @@
 #ifndef Z62_RAW12_RAWOUT_SINGLE
 #define Z62_RAW12_RAWOUT_SINGLE 0
 #endif
+#ifndef Z62_RAW12_DMA_SINGLE
+#define Z62_RAW12_DMA_SINGLE 0
+#endif
 
 #define RH_WORD(a) (*(volatile z62_u32 *)(a))
 #define RH_BYTE(a) (*(volatile unsigned char *)(a))
@@ -41,6 +44,12 @@ static z62_u32 raw12_rawout_seen_ctl;
 static z62_u32 raw12_rawout_seen_address;
 static z62_u32 raw12_rawout_bad_row;
 static z62_u32 raw12_rawout_bad_word;
+#endif
+#if Z62_RAW12_DMA_SINGLE
+static z62_u32 raw12_dma_go;
+static z62_u32 raw12_dma_stat;
+static z62_u32 raw12_dma_bad_row;
+static z62_u32 raw12_dma_bad_word;
 #endif
 
 static z62_u32 raw12_hook_rom_function(z62_u32 address)
@@ -345,13 +354,19 @@ static z62_u32 raw12_write_status(void)
     data[20]=raw12_single_exported;
     data[21]=raw12_single_export_errors;
     data[22]=raw12_export_last_open;
-    if(Z62_RAW12_DUAL_FRAME || Z62_RAW12_RAWOUT_SINGLE) data[22]=raw12_dual_error;
+    if(Z62_RAW12_DUAL_FRAME || Z62_RAW12_RAWOUT_SINGLE || Z62_RAW12_DMA_SINGLE) data[22]=raw12_dual_error;
     data[23]=raw12_export_last_write;
     data[24]=raw12_export_last_close;
 #if Z62_RAW12_RAWOUT_SINGLE
     if(Z62_RAW12_RAWOUT_SINGLE && raw12_single_state!=2) {
         data[23]=raw12_dual_error==0x2306 ? raw12_rawout_bad_row : raw12_rawout_seen_ctl;
         data[24]=raw12_dual_error==0x2306 ? raw12_rawout_bad_word : raw12_rawout_seen_address;
+    }
+#endif
+#if Z62_RAW12_DMA_SINGLE
+    if(Z62_RAW12_DMA_SINGLE && raw12_single_state!=2) {
+        data[23]=raw12_dual_error==0x2406 ? raw12_dma_bad_row : raw12_dma_go;
+        data[24]=raw12_dual_error==0x2406 ? raw12_dma_bad_word : raw12_dma_stat;
     }
 #endif
     if(Z62_RAW12_DUAL_FRAME && raw12_single_state==3) {
@@ -623,12 +638,18 @@ static void raw12_rawout_step(void)
 }
 #endif
 
+#include "raw12_dma_single.h"
+
 static void raw12_single_step(void)
 {
-    if(Z62_RAW12_RAWOUT_SINGLE) {
-        raw12_rawout_step();
-        return;
-    }
+#if Z62_RAW12_DMA_SINGLE
+    raw12_dma_single_step();
+    return;
+#endif
+#if Z62_RAW12_RAWOUT_SINGLE
+    raw12_rawout_step();
+    return;
+#endif
     if(Z62_RAW12_DUAL_FRAME) {
         raw12_dual_step();
         return;
@@ -715,7 +736,11 @@ static void raw12_hook_worker(void *ignored)
 #if Z62_RAW12_SINGLE_FRAME
         if(RH_WORD(RH_MIPU_SLOT)==(z62_u32)raw12_hook_event) raw12_single_step();
 #endif
-        RH_CALL(0x103dec95,void,z62_u32)(10);
+        z62_u32 delay=10;
+#if Z62_RAW12_DMA_SINGLE
+        if(raw12_single_state==1) delay=1;
+#endif
+        RH_CALL(0x103dec95,void,z62_u32)(delay);
     }
 }
 
