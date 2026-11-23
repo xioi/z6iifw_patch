@@ -173,7 +173,7 @@ static z62_u32 raw12_probe_copy_count;
 static void raw12_probe_event(z62_u32 status)
 {
     z62_u32 index=raw12_probe_event_count;
-    if(index>=32) return;
+    if(index>=32 || !(status&0x1000u)) return;
     for(z62_u32 i=0;i<16;++i) raw12_probe_events[index][i]=0;
     raw12_probe_events[index][0]=raw12_hook_frames;
     raw12_probe_events[index][1]=RH_WORD(0x04266008u);
@@ -271,6 +271,7 @@ static void raw12_dma_stream8_step(void)
         RS_STORE(&raw12_stream_writer_error,0);
         RS_STORE(&raw12_stream_write_index,0);
 #if Z62_RAW12_DMA_STREAM16
+        raw12_stream_dropped=0;
         raw12_probe_event_count=0;
         raw12_probe_copy_count=0;
 #endif

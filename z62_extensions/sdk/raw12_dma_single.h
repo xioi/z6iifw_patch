@@ -62,8 +62,16 @@ static void raw12_dma_capture(void)
         return;
     }
     if(sequence!=raw12_single_sequence+1) {
-        raw12_dma_reject(0x2405);
-        return;
+#if Z62_RAW12_DMA_STREAM16
+        if(sequence>raw12_single_sequence) {
+            raw12_stream_dropped+=sequence-raw12_single_sequence-1;
+            raw12_single_sequence=sequence-1;
+        } else
+#endif
+        {
+            raw12_dma_reject(0x2405);
+            return;
+        }
     }
     raw12_dma_go=RH_WORD(RD_GO);
     raw12_dma_stat=RH_WORD(RD_STAT);

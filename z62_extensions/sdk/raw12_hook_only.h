@@ -69,6 +69,9 @@ static z62_u32 raw12_dma_bad_word;
 #if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
 static z62_u32 raw12_stream_write_index;
 #endif
+#if Z62_RAW12_DMA_STREAM16
+static z62_u32 raw12_stream_dropped;
+#endif
 
 static z62_u32 raw12_hook_rom_function(z62_u32 address)
 {
@@ -396,8 +399,14 @@ static z62_u32 raw12_write_status(void)
     if((Z62_RAW12_DMA_SINGLE || Z62_RAW12_DMA_DUAL || Z62_RAW12_DMA_BURST4 || Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16) && raw12_single_state!=2) {
         z62_u32 sentinel=raw12_dual_error==0x2406 || raw12_dual_error==0x2408 || (raw12_dual_error&0xff00u)==0x2500u;
         data[23]=sentinel ? raw12_dma_bad_row : raw12_dma_go;
+#if Z62_RAW12_DMA_STREAM16
+        if(!sentinel) data[23]=raw12_stream_dropped;
+#endif
         data[24]=sentinel ? raw12_dma_bad_word : raw12_dma_stat;
     }
+#endif
+#if Z62_RAW12_DMA_STREAM16
+    if(Z62_RAW12_DMA_STREAM16 && raw12_single_state==2) data[23]=raw12_stream_dropped;
 #endif
     if(Z62_RAW12_DUAL_FRAME && raw12_single_state==3) {
         data[23]=raw12_dual_after_sequence;
