@@ -43,6 +43,8 @@ def main():
                         help='research eight frames through a bounded ring and a writer task')
     parser.add_argument('--raw12-dma-stream16', action='store_true',
                         help='research sixteen ring-reused frames with refresh diagnostics')
+    parser.add_argument('--write-bench', action='store_true',
+                        help='measure 64 MiB of sequential writes with 256 KiB chunks; no RAW capture')
     parser.add_argument('--focus-probe', action='store_true',
                         help='enable focus diagnostics; implies --portrait')
     parser.add_argument('--output', type=Path, default=Path('artifacts/Z62APP.BIN'),
@@ -53,11 +55,11 @@ def main():
 
     if not (args.portrait or args.evf or args.movie or args.video_rotation or args.raw12 or
             args.raw12_hook_only or args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or
-            args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16 or args.focus_probe):
+            args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16 or args.write_bench or args.focus_probe):
         parser.error('select at least one feature, including the explicitly selected RAW12 research modes')
     if (args.raw12+args.raw12_hook_only+args.raw12_single_frame+args.raw12_single_export+args.raw12_dual_frame+
-        args.raw12_rawout_single+args.raw12_dma_single+args.raw12_dma_dual+args.raw12_dma_burst4+args.raw12_dma_stream8+args.raw12_dma_stream16)>1:
-        parser.error('the eleven RAW12 research modes are mutually exclusive')
+        args.raw12_rawout_single+args.raw12_dma_single+args.raw12_dma_dual+args.raw12_dma_burst4+args.raw12_dma_stream8+args.raw12_dma_stream16+args.write_bench)>1:
+        parser.error('the twelve RAW12 research modes are mutually exclusive')
 
     portrait = args.portrait or args.evf or args.focus_probe
     configuration = dict(portrait=portrait, evf=args.evf, movie=args.movie,
@@ -67,10 +69,10 @@ def main():
                          raw12_rawout_single=args.raw12_rawout_single, raw12_dma_single=args.raw12_dma_single,
                          raw12_dma_dual=args.raw12_dma_dual, raw12_dma_burst4=args.raw12_dma_burst4,
                          raw12_dma_stream8=args.raw12_dma_stream8, raw12_dma_stream16=args.raw12_dma_stream16,
-                         focus_probe=args.focus_probe, histogram=False)
-    raw12_hook = args.raw12_hook_only or args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16
-    raw12_frame = args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16
-    raw12_export = args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16
+                         write_bench=args.write_bench, focus_probe=args.focus_probe, histogram=False)
+    raw12_hook = args.raw12_hook_only or args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16 or args.write_bench
+    raw12_frame = args.raw12_single_frame or args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16 or args.write_bench
+    raw12_export = args.raw12_single_export or args.raw12_dual_frame or args.raw12_rawout_single or args.raw12_dma_single or args.raw12_dma_dual or args.raw12_dma_burst4 or args.raw12_dma_stream8 or args.raw12_dma_stream16 or args.write_bench
     defines = [f'Z62_WITH_PORTRAIT={int(portrait)}',
                f'Z62_WITH_MOVIE={int(args.movie)}',
                f'Z62_WITH_MOVIE_ROTATION={int(args.video_rotation)}',
@@ -85,6 +87,7 @@ def main():
                f'Z62_RAW12_DMA_BURST4={int(args.raw12_dma_burst4)}',
                f'Z62_RAW12_DMA_STREAM8={int(args.raw12_dma_stream8)}',
                f'Z62_RAW12_DMA_STREAM16={int(args.raw12_dma_stream16)}',
+               f'Z62_RAW12_WRITE_BENCH={int(args.write_bench)}',
                f'Z62_EVF_PORTRAIT={int(args.evf)}']
     if args.focus_probe:
         defines.append('Z62_FOCUS_PROBE=1')

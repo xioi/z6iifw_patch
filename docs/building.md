@@ -71,6 +71,7 @@ llvm-nm --version
 | `--evf` | 实验性 EVF 竖屏拍摄信息 | 自动启用 `--portrait` |
 | `--movie` | 实验性普通录像时长扩展 | 无，可独立构建 |
 | `--video-rotation` | 普通内录 MOV/MP4 开档锁姿并写入视频轨方向矩阵 | 无，可独立构建 |
+| `--write-bench` | 非录像状态写入 64 MiB，256 KiB 分块并记录实际吞吐 | 无；QEMU 已通过，真机待验证；不采集 RAW |
 | `--focus-probe` | 对焦属性和原生绘制诊断，生成 `FOCUSPROP.BIN` | 自动启用 `--portrait` |
 | `--raw12-dual-frame` | CPU 双帧诊断；真机第二帧复制超时撕裂，不再作为功能候选 | 无；保留失败诊断 |
 | `--raw12-rawout-single` | RAWOUT 写入诊断；真机中途启用未覆盖私有缓冲 | 无；不再作为功能候选 |

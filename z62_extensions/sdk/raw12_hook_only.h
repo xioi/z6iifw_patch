@@ -30,6 +30,9 @@
 #ifndef Z62_RAW12_DMA_STREAM16
 #define Z62_RAW12_DMA_STREAM16 0
 #endif
+#ifndef Z62_RAW12_WRITE_BENCH
+#define Z62_RAW12_WRITE_BENCH 0
+#endif
 #if Z62_RAW12_DMA_STREAM16
 static void raw12_probe_event(z62_u32 status);
 #endif
@@ -235,7 +238,7 @@ static z62_u32 raw12_export_write(int file,void *buffer,z62_u32 size)
     while(offset<size) {
         z62_u32 count=size-offset,actual=0;
         z62_u32 limit=65536u;
-#if Z62_RAW12_DMA_STREAM16
+#if Z62_RAW12_DMA_STREAM16 || Z62_RAW12_WRITE_BENCH
         limit=262144u;
 #endif
         if(count>limit) count=limit;
@@ -333,7 +336,8 @@ static void raw12_export_write_frame(void)
 static int raw12_status_open_unique(z62_u32 probe)
 {
     char path[16]={'B',':','\\','R','1','2','S','0','0','0','.','B','I','N',0,0};
-    if(probe) path[3]='P';
+    if(probe==2) path[3]='B';
+    else if(probe) path[3]='P';
     z62_u32 start=raw12_status_next_name;
     for(z62_u32 n=0;n<1000;++n) {
         z62_u32 index=(start+n)%1000u;
@@ -682,9 +686,14 @@ static void raw12_rawout_step(void)
 #include "raw12_dma_dual.h"
 #include "raw12_dma_burst4.h"
 #include "raw12_dma_stream8.h"
+#include "raw12_write_bench.h"
 
 static void raw12_single_step(void)
 {
+#if Z62_RAW12_WRITE_BENCH
+    raw12_write_bench_step();
+    return;
+#endif
 #if Z62_RAW12_DMA_STREAM8 || Z62_RAW12_DMA_STREAM16
     raw12_dma_stream8_step();
     return;
