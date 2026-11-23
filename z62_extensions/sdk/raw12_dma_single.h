@@ -8,6 +8,9 @@
 #define RD_LEN (RD_CHANNEL+0x10u)
 #define RD_SRC (RD_CHANNEL+0x14u)
 #define RD_DST (RD_CHANNEL+0x18u)
+#define RD_CONFIG0 (RD_CHANNEL+0x1cu)
+#define RD_CONFIG1 (RD_CHANNEL+0x20u)
+#define RD_CONFIG2 (RD_CHANNEL+0x24u)
 #define RD_GO (RD_CHANNEL+0x28u)
 #define RD_STAT (RD_CHANNEL+0x30u)
 #define RD_REGISTRATION 0xc180675cu
@@ -15,7 +18,7 @@
 
 static z62_u32 raw12_dma_active;
 static z62_u32 raw12_dma_ready_sequence;
-static z62_u32 raw12_dma_saved[4];
+static z62_u32 raw12_dma_saved[7];
 
 static z62_u32 raw12_dma_sentinel(z62_u32 row,z62_u32 word)
 {
@@ -32,6 +35,9 @@ static void raw12_dma_restore(void)
     RH_WORD(RD_SRC)=raw12_dma_saved[1];
     RH_WORD(RD_DST)=raw12_dma_saved[2];
     RH_WORD(RD_GO)=raw12_dma_saved[3];
+    RH_WORD(RD_CONFIG0)=raw12_dma_saved[4];
+    RH_WORD(RD_CONFIG1)=raw12_dma_saved[5];
+    RH_WORD(RD_CONFIG2)=raw12_dma_saved[6];
     RH_WORD(RD_STAT)=0;
     raw12_dma_active=0;
 }
@@ -72,8 +78,14 @@ static void raw12_dma_capture(void)
     raw12_dma_saved[1]=RH_WORD(RD_SRC);
     raw12_dma_saved[2]=RH_WORD(RD_DST);
     raw12_dma_saved[3]=raw12_dma_go;
+    raw12_dma_saved[4]=RH_WORD(RD_CONFIG0);
+    raw12_dma_saved[5]=RH_WORD(RD_CONFIG1);
+    raw12_dma_saved[6]=RH_WORD(RD_CONFIG2);
     raw12_dma_active=1;
     z62_u32 half=raw12_single_frame_bytes/2u;
+    RH_WORD(RD_CONFIG0)=0x30f00u;
+    RH_WORD(RD_CONFIG1)=0x30f00u;
+    RH_WORD(RD_CONFIG2)=0;
     RH_WORD(RD_LEN)=half-1u;
     RH_WORD(RD_SRC)=source+half;
     RH_WORD(RD_DST)=(z62_u32)raw12_single_buffer+half;
