@@ -10,6 +10,8 @@
 #define RD_DST (RD_CHANNEL+0x18u)
 #define RD_GO (RD_CHANNEL+0x28u)
 #define RD_STAT (RD_CHANNEL+0x30u)
+#define RD_REGISTRATION 0xc180675cu
+#define RD_RESULT (RD_REGISTRATION+0x18u)
 
 static z62_u32 raw12_dma_active;
 static z62_u32 raw12_dma_ready_sequence;
@@ -62,6 +64,10 @@ static void raw12_dma_capture(void)
         raw12_dma_reject(0x2401);
         return;
     }
+    if((RH_WORD(RD_REGISTRATION)&0xffffu)!=0x13du || RH_WORD(RD_REGISTRATION+0xcu)!=0x10295fa7u) {
+        raw12_dma_reject(0x2407);
+        return;
+    }
     raw12_dma_saved[0]=RH_WORD(RD_LEN);
     raw12_dma_saved[1]=RH_WORD(RD_SRC);
     raw12_dma_saved[2]=RH_WORD(RD_DST);
@@ -72,7 +78,8 @@ static void raw12_dma_capture(void)
     RH_WORD(RD_SRC)=source+half;
     RH_WORD(RD_DST)=(z62_u32)raw12_single_buffer+half;
     RH_WORD(RD_STAT)=0;
-    RH_WORD(RD_GO)=0x11109000u;
+    RH_BYTE(RD_RESULT)=0;
+    RH_WORD(RD_GO)=0x11109003u;
     RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source,half);
     RH_CALL(0x1035d254,void *,void *,const void *,z62_u32)(raw12_single_buffer,(const void *)source,half);
     z62_u32 error=0;
@@ -88,7 +95,7 @@ static void raw12_dma_capture(void)
     }
     raw12_dma_go=RH_WORD(RD_GO);
     raw12_dma_stat=RH_WORD(RD_STAT);
-    if(!error && ((raw12_dma_go&0x10000000u) || !(raw12_dma_stat&8u))) error=0x2402;
+    if(!error && ((raw12_dma_go&0x10000000u) || (!(raw12_dma_stat&8u) && !(RH_BYTE(RD_RESULT)&8u)))) error=0x2402;
     if(!error && (sequence!=raw12_hook_frames || source!=RH_WORD(0x20380310u)))
         error=sequence!=raw12_hook_frames ? 0x2213 : 0x2223;
     raw12_dma_restore();

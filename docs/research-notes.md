@@ -248,15 +248,24 @@ assert second > first, 'No advancing MIPU frames; not a valid recording test'
 PY
 ```
 
-只有上述检查通过才执行 `r` 开始录像，等待 4 秒；再用 `r` 停止，等待至少 9 秒让原厂文件任务退出。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
+只有上述检查通过才执行 `r` 开始录像。开始 1 秒后必须确认 `MOVIE_ACTIVE` 的字节值为 1，再继续录到约 4 秒；若为 0，此次运行无效，不能用帧计数增长代替录像激活。随后用 `r` 停止，等待至少 9 秒让原厂文件任务退出。需要诊断模块状态或抓取内存时，再让导出额外等待至少 3 秒。以下时序是墙钟等待，不要把虚拟时间戳直接当成等待命令：
 
 ```sh
 python3 - <<'PY'
+from pathlib import Path
+import struct
 import time
 from hmp import hmp
-for key, delay in [('r', 4), ('r', 9)]:
-    hmp(['sendkey ' + key], settle=1)
-    time.sleep(delay)
+out = Path('out/raw12_qemu').resolve()
+hmp(['sendkey r'], settle=1)
+time.sleep(1)
+hmp([f'memsave 0xc18117a8 4 "{out / "movie-active.bin"}"'], settle=1)
+active = struct.unpack('<I', (out / 'movie-active.bin').read_bytes())[0] & 0xff
+print('MOVIE_ACTIVE:', active)
+assert active == 1, 'Recording did not start; not a valid capture test'
+time.sleep(3)
+hmp(['sendkey r'], settle=1)
+time.sleep(9)
 PY
 ```
 
@@ -353,7 +362,13 @@ QEMU 候选 SHA-256 `34d0657be1796ae81f145e8df4f7628e0cdfbb6e75e9fa40f5d6dfc2247
 
 上述 DMA 辅助单帧在真机得到 `R12S000.BIN`，没有 Z12：`state=3`、`captured=0`、`torn=1`、`error=0x2201`、`GO=0x11109000`、`STAT=0x10000`。通道已经启动，但在下一帧到来时仍未完成，导出未启动。后续版本先启动后半帧 DMA，再只对 CPU 负责的前半帧做缓存失效，避免在 DMA 开始前失效整帧源。诊断细分为 `0x2211`（CPU 半帧期间序号变化）、`0x2212`（等待 DMA 时变化）、`0x2213`（DMA 完成后变化）；对应源地址变化为 `0x2221/0x2222/0x2223`。
 
-缓存顺序优化版 SHA-256 `7c84d394e5eefc473a675b210b8e6e3e5850c0db88cb5931fb400ced5853ae13` 已通过 QEMU：`captured=1`、`torn=0`、`rejected=0`、`GO=0x01109000`、`STAT=8`、`exported=1`，全部哨兵被覆盖，完整私有帧、源帧和 Z12 逐字节相同。Z12 SHA-256 为 `c1dca07c186ebacc216b571d1c27c94222153a22b36a2bb4b32e073cc570e893`，同次 5.28 秒原厂 MOV 完整解码通过。真机缓存和实际 DMA 时序仍未验证，下一阶段只根据上述分段错误码定位，不恢复连续写卡。
+缓存顺序优化版 SHA-256 `7c84d394e5eefc473a675b210b8e6e3e5850c0db88cb5931fb400ced5853ae13` 已通过 QEMU：`captured=1`、`torn=0`、`rejected=0`、`GO=0x01109000`、`STAT=8`、`exported=1`，全部哨兵被覆盖，完整私有帧、源帧和 Z12 逐字节相同。Z12 SHA-256 为 `c1dca07c186ebacc216b571d1c27c94222153a22b36a2bb4b32e073cc570e893`，同次 5.28 秒原厂 MOV 完整解码通过。
+
+同一优化版真机 `R12S001.BIN` 为 `state=3`、`captured=0`、`torn=1`、`error=0x2212`、`GO=0x11109000`、`STAT=0x10000`，没有 Z12。这已经把瓶颈定位到等待 DMA：CPU 半帧已完成，但 DMA 在下一帧到来时仍忙，不能再通过调整 CPU 缓存顺序解决。
+
+随后对原厂 XDMAC 写 `GO` 的只读跟踪发现，原厂软件请求启动值是 `0x11109003`，而此前实验漏掉了低两位中断使能。原厂 `0x10295f6c` 启动函数会执行 `ORR value, value, #3`，软件请求分支再设置 SE/CE；停止路径在 `0x10295e3c–0x10295e4c` 清 STAT 和 GO 低两位。四个通道的完成处理均存在，通道 3 注册项为 IRQ `0x13d`、处理器 `0x10295fa7`，未用回调为空。服务上下文 `0xc180675c` 的 `+0x18` 字节保存原生完成处理器记录的 STAT 低 4 位，下一字 `+0x1c` 保存传输长度，两者不能混用。新版使用原厂的 `0x11109003`，先检查注册项（不匹配则 `0x2407`），并接受硬件 `STAT=8` 或 `+0x18` 已确认的结果，避免原生 IRQ 已清 STAT 时误报 `0x2402`。每次启动前清零该状态字节，防止沿用上一次完成结果。
+
+最终修正版 SHA-256 `3df0e90d755f71a6d0fa3e1473e34ba9aa3468d95e04089e39d22a1754d25ca0` 在干净实例中先确认 `MOVIE_ACTIVE=1`，随后得到 `captured=1`、`torn=0`、`rejected=0`、`exported=1`、`GO=0x01109000`、硬件 `STAT=0`，而 `0xc1806774` 的原生状态字节为 `8`。全部哨兵被覆盖，完整私有帧、源帧和 Z12 逐字节一致；Z12 SHA-256 为 `f458a8d953398096c97d52f2408efca55ec0a0f2831c33766731fc462f3f8a84`，同次 5.76 秒原厂 MOV 完整解码通过。此前没有 `MOVIE_ACTIVE` 的运行全部判为无效环境测试，未计入该结果。真机完成中断、带宽和缓存时序仍需单独验收，不能直接扩展到连续 RAW。
 
 ## 验证边界
 
