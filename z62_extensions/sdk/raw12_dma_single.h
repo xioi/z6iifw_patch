@@ -68,20 +68,20 @@ static void raw12_dma_capture(void)
     raw12_dma_saved[3]=raw12_dma_go;
     raw12_dma_active=1;
     z62_u32 half=raw12_single_frame_bytes/2u;
-    RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source,raw12_single_frame_bytes);
     RH_WORD(RD_LEN)=half-1u;
     RH_WORD(RD_SRC)=source+half;
     RH_WORD(RD_DST)=(z62_u32)raw12_single_buffer+half;
     RH_WORD(RD_STAT)=0;
     RH_WORD(RD_GO)=0x11109000u;
+    RH_CALL(0x1034bde9,void,void *,z62_u32)((unsigned char *)source,half);
     RH_CALL(0x1035d254,void *,void *,const void *,z62_u32)(raw12_single_buffer,(const void *)source,half);
     z62_u32 error=0;
     if(sequence!=raw12_hook_frames || source!=RH_WORD(0x20380310u)) {
-        error=sequence!=raw12_hook_frames ? 0x2201 : 0x2202;
+        error=sequence!=raw12_hook_frames ? 0x2211 : 0x2221;
     }
     for(z62_u32 wait=0;!error && (RH_WORD(RD_GO)&0x10000000u);++wait) {
         if(wait>=100 || sequence!=raw12_hook_frames || source!=RH_WORD(0x20380310u) || RH_BYTE(RH_MOVIE_ACTIVE)!=1) {
-            error=sequence!=raw12_hook_frames ? 0x2201 : source!=RH_WORD(0x20380310u) ? 0x2202 : 0x2403;
+            error=sequence!=raw12_hook_frames ? 0x2212 : source!=RH_WORD(0x20380310u) ? 0x2222 : 0x2403;
             break;
         }
         RH_CALL(0x103dec95,void,z62_u32)(1);
@@ -90,11 +90,11 @@ static void raw12_dma_capture(void)
     raw12_dma_stat=RH_WORD(RD_STAT);
     if(!error && ((raw12_dma_go&0x10000000u) || !(raw12_dma_stat&8u))) error=0x2402;
     if(!error && (sequence!=raw12_hook_frames || source!=RH_WORD(0x20380310u)))
-        error=sequence!=raw12_hook_frames ? 0x2201 : 0x2202;
+        error=sequence!=raw12_hook_frames ? 0x2213 : 0x2223;
     raw12_dma_restore();
     if(error) {
         raw12_dual_error=error;
-        if(error==0x2201 || error==0x2202) {
+        if((error&0xff00u)==0x2200u) {
             raw12_single_state=3;
             ++raw12_single_torn;
         } else {
