@@ -71,7 +71,8 @@ llvm-nm --version
 | `--evf` | 实验性 EVF 竖屏拍摄信息 | 自动启用 `--portrait` |
 | `--movie` | 实验性普通录像时长扩展 | 无，可独立构建 |
 | `--video-rotation` | 普通内录 MOV/MP4 开档锁姿并写入视频轨方向矩阵 | 无，可独立构建 |
-| `--write-bench` | 非录像状态写入 64 MiB，256 KiB 分块并记录实际吞吐 | 无；QEMU 已通过，真机待验证；不采集 RAW |
+| `--write-bench` | 分别以 256 KiB、1 MiB、4 MiB 写调用测试 64 MiB，缓存维护固定为 256 KiB | 无；QEMU 三份内容已逐字节校验；不采集 RAW；真机待验证 |
+| `--write-bench-volume {auto,A,B}` | 限制基准输出卷；`auto` 依次尝试 B、A，日志记录实际卷 | 只能与 `--write-bench` 一起使用，默认 `auto` |
 | `--focus-probe` | 对焦属性和原生绘制诊断，生成 `FOCUSPROP.BIN` | 自动启用 `--portrait` |
 | `--raw12-dual-frame` | CPU 双帧诊断；真机第二帧复制超时撕裂，不再作为功能候选 | 无；保留失败诊断 |
 | `--raw12-rawout-single` | RAWOUT 写入诊断；真机中途启用未覆盖私有缓冲 | 无；不再作为功能候选 |
@@ -79,11 +80,21 @@ llvm-nm --version
 | `--raw12-dma-dual` | 两块独立缓冲连续捕获两帧，停止后一起导出 | 无；QEMU 及真机 1080p30 双帧已通过 |
 | `--raw12-dma-burst4` | 四个独立缓冲连续捕获四帧，停止后一起导出 | 无；真机采集/导出通过，末两帧重复；已排除 `0x1002` 替代事件并恢复 `0x1000` |
 | `--raw12-dma-stream8` | 8 个独立槽位和独立写入任务，有限 8 帧连续写入 | 无；QEMU 及真机 1080p30 已通过；不包含无限连续录像 |
-| `--raw12-dma-stream16` | 8 槽分两批写入 16 帧，保留真实事件缺口和刷新日志 | 无；真机 16 帧写出与 DNG 通过，但有 22 个通知缺口；连续 30fps 未实现 |
+| `--raw12-dma-stream16` | 8 槽分两批写入 16 帧，保留真实事件缺口和刷新日志 | 无；SD/CFexpress B 真机写出与 DNG 通过，但有 20–22 个通知缺口及重复源帧；连续 30fps 未实现 |
 | `--output PATH` | 指定模块输出路径 | 默认 `artifacts/Z62APP.BIN` |
 | `--force` | 替换旧模块及其配置清单 | 切换配置时显式指定 |
 
 至少选择一个功能参数。`--evf` 或 `--focus-probe` 自动包含竖屏依赖，但不会自动包含录像功能。`--video-rotation` 独立于 `--movie` 和 `--portrait`，只负责视频文件方向元数据。旧版自制直方图/水平仪已确认不兼容，不提供构建开关。
+
+三档写速基准不采集 RAW，只在非录像状态执行：
+
+```sh
+python3 z62_extensions/tools/build.py --write-bench \
+  --output artifacts/write-bench-camera/Z62APP.BIN --force
+# 需要强制某个逻辑卷时，额外加入 --write-bench-volume A 或 B
+```
+
+备份并替换卡上的 `Z62APP.BIN`，确保至少有 256 MiB 可用空间，保持非录像状态启动并等待约 25 秒。每轮生成 `BENCH000–002.BIN`（各 64 MiB，共 192 MiB）及对应的 `B12S000–002.BIN`；最后一份状态头 `data[18]` 应为 3、`data[2]` 应为 0。若相机开始录像，基准会停止并关闭当前文件。测试后恢复正式模块，取回三份状态文件供分析；旧数据不会被覆盖，重复测试前自行清理不再需要的 `BENCH*.BIN`。状态布局和速度换算见[研究笔记](research-notes.md#相机文件系统写速基准)。QEMU 内容校验不代表真机数据已读回校验，也不代表模拟器速度适用于真实介质。
 
 ### 默认发布组合
 
