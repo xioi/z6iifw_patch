@@ -16,6 +16,7 @@ static z62_u32 raw12_stream_sequences[RS_SLOTS];
 static z62_u32 raw12_stream_sources[RS_SLOTS];
 static z62_u32 raw12_stream_slots[RS_SLOTS];
 static z62_u32 raw12_stream_capture_done;
+static z62_u32 raw12_stream_batch_paused;
 static z62_u32 raw12_stream_writer_done;
 static z62_u32 raw12_stream_writer_error;
 static int raw12_stream_file=-1;
@@ -255,6 +256,14 @@ static void raw12_dma_stream8_step(void)
         RS_STORE(&raw12_stream_capture_done,1);
         return;
     }
+#if Z62_RAW12_DMA_STREAM16
+    if(raw12_stream_batch_paused) {
+        if(RS_LOAD(&raw12_stream_write_index)<8) return;
+        raw12_stream_dropped+=raw12_hook_frames-raw12_single_sequence;
+        raw12_single_sequence=raw12_hook_frames;
+        raw12_stream_batch_paused=0;
+    }
+#endif
     if(raw12_single_state>=2) return;
     if(raw12_single_state==0) {
         raw12_single_seen_recording=1;
@@ -267,6 +276,7 @@ static void raw12_dma_stream8_step(void)
         raw12_dual_error=0;
         raw12_dual_allocation_attempts=0;
         RS_STORE(&raw12_stream_capture_done,0);
+        RS_STORE(&raw12_stream_batch_paused,0);
         RS_STORE(&raw12_stream_writer_done,0);
         RS_STORE(&raw12_stream_writer_error,0);
         RS_STORE(&raw12_stream_write_index,0);
@@ -359,6 +369,12 @@ static void raw12_dma_stream8_step(void)
     raw12_stream_sources[slot]=raw12_single_source;
     RS_STORE(&raw12_stream_slots[slot],2);
     RS_STORE(&raw12_single_captured,index+1);
+#if Z62_RAW12_DMA_STREAM16
+    if(index==7) {
+        raw12_stream_batch_paused=1;
+        return;
+    }
+#endif
     if(index==RS_TOTAL-1) {
         raw12_single_state=2;
         RS_STORE(&raw12_stream_capture_done,1);
