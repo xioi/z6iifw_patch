@@ -10,6 +10,7 @@
 
 # Build products
 artifacts/
+release/
 .venv/
 __pycache__/
 *.pyc

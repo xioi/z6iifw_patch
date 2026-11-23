@@ -3,14 +3,15 @@
 本文说明如何按功能组合构建一个 Z6II C 1.70 SD 原生模块，以及如何构建加载器升级包和整理 GitHub Releases 附件。
 
 > [!WARNING]
-> 构建成功只说明代码、格式和签名校验通过，不等于真机功能或稳定性通过。当前模块仍有 README 中列出的已知问题。不要为其他机型或其他固件版本直接修改目标名称后刷入。
+> 构建成功只说明代码、格式和签名校验通过，不等于真机功能或稳定性通过。当前模块仍有[研究文档](research.md)中列出的已知问题。不要为其他机型或其他固件版本直接修改目标名称后刷入。
 
 ## 1. 构建产物
 
 | 产物 | 构建入口 | 需要的额外输入 |
 | --- | --- | --- |
 | 可配置 SD 模块 `Z62APP.BIN` | `z62_extensions/tools/build.py` | 无 |
-| 加载器升级包 `Z6_2_0170_loader.bin` | `z62_extensions/tools/build_package.py` | 官方 C 1.70 更新包、解密表、K8 |
+| 固定加载器升级包 `Z6_2_0170_loader.bin` | `tools/build_loader_firmware.py` | 官方 C 1.70 更新包，无 K8 输入 |
+| 从源码重建加载器升级包 | `z62_extensions/tools/build_package.py` | 官方 C 1.70 更新包、解密表、K8 |
 | 单独的加载器主模块 | `z62_extensions/tools/build_host.py` | 从官方更新包解出的原始主模块 |
 
 `build.py` 每次只生成一个 `Z62APP.BIN` 和一个同名 `.json` 配置清单。切换功能时使用 `--force` 替换这两个文件，不再为 LCD-only、movie-only、diagnostics 等配置保留独立预编译副本。
@@ -99,7 +100,7 @@ python3 z62_extensions/tools/build.py --write-bench \
 ### 默认发布组合
 
 ```sh
-python z62_extensions/tools/build.py --portrait --evf --movie --video-rotation
+python z62_extensions/tools/build.py --portrait --movie --video-rotation
 ```
 
 默认生成：
@@ -141,7 +142,20 @@ python z62_extensions/tools/build.py --focus-probe --force
 
 ## 4. 构建加载器升级包
 
-### 必需输入
+### 终端用户：固定加载器生成器
+
+只需要安装当前加载器时，使用独立生成器，不需要 K8、`key.json`、NumPy 或编译工具：
+
+```sh
+python3 tools/build_loader_firmware.py /path/to/Z6_2_0170.bin \
+  --output release/Z6_2_0170_loader.bin
+```
+
+脚本内置当前 host 的二进制补丁和容器变换数据，只接受哈希匹配的原厂 C 1.70 包。固定输出 SHA-256 为 `aa5e2e8599f9126e92476c64e7de7c966d662d101e7d9ab19a358d1bb19ceacf`，脚本会验证目录、模块 CRC、包 CRC、固定签名、解密回读和完整包哈希。它不会读取 K8，也不能用于证明修改后的 host 源码；host 发生变化时必须使用下面的开发链重新构建和验证。
+
+### 开发链必需输入
+
+以下输入只用于从 host 源码重新构建，不是终端安装当前固定加载器的依赖：
 
 | 输入 | 说明 |
 | --- | --- |
@@ -149,7 +163,7 @@ python z62_extensions/tools/build.py --focus-probe --force
 | `key.json` | 与该机型的旧版固件容器匹配的 `T1`、`T2`、`T3` 及自检哈希 |
 | `sig_z6ii.json` | 与该官方包匹配的 8 字节 `K8` 及可选自检哈希 |
 
-仓库不包含官方固件、恢复密钥或 K8，也不会自动获取它们。缺少这些输入时仍可构建 SD 模块，但不能生成新的签名升级包。不要把真实密钥文件提交到 Git、贴到 Issue 或上传到 Release。
+仓库不包含官方固件、独立密钥文件或 K8 文件，也不会自动获取它们。修改 host 后缺少这些输入时仍可构建 SD 模块，但不能重新生成和验证新的签名升级包。不要把真实密钥文件提交到 Git、贴到 Issue 或上传到 Release。
 
 构建器锁定的原厂输入哈希为：
 
@@ -161,7 +175,7 @@ python z62_extensions/tools/build.py --focus-probe --force
 bb83613121f843d65101da936d942acdc513d86dbd3abc26259d0d870d03f5d4
 ```
 
-### 一步构建可刷写升级包
+### 开发链：一步构建可刷写升级包
 
 将示例路径替换为实际输入路径：
 
@@ -220,7 +234,7 @@ shasum -a 256 \
   artifacts/Z62APP.BIN
 ```
 
-README 列出了加载器和默认 `--portrait --evf --movie --video-rotation` 组合的当前候选校验值。使用相同源码和工具链时，默认配置应得到相同哈希；含方向默认模块目前只有构建、QEMU 和 ARM 验证。历史真机模块不包含本次大容量 UI 限幅修正，不能用旧配置名称或旧哈希代替当前产物。其他组合应记录自己的哈希，不要复制默认配置的哈希或真机结论。
+README 列出了固定加载器的校验值。当前稳定发布模块使用 `--portrait --movie --video-rotation`，SHA-256 为 `a6874523f365133a98ac6c892f9b1f0d9d210e446bbf1490b2af6ba842580d3a`；使用相同源码和工具链时应得到相同哈希。EVF 和其他研究功能不属于该发布配置。历史真机模块不包含本次大容量 UI 限幅修正，不能用旧配置名称或旧哈希代替当前产物。其他组合应记录自己的哈希，不要复制默认配置的哈希或真机结论。
 
 至少确认：
 
