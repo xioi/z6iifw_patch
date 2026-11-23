@@ -76,6 +76,7 @@ llvm-nm --version
 | `--raw12-rawout-single` | RAWOUT 写入诊断；真机中途启用未覆盖私有缓冲 | 无；不再作为功能候选 |
 | `--raw12-dma-single` | XDMAC 通道 3 与 CPU 各复制半帧，停止后导出 | 无；QEMU 及真机 1080p30 单帧已通过 |
 | `--raw12-dma-dual` | 两块独立缓冲连续捕获两帧，停止后一起导出 | 无；QEMU 及真机 1080p30 双帧已通过 |
+| `--raw12-dma-burst4` | 四个独立缓冲连续捕获四帧，停止后一起导出 | 无；QEMU 已通过，真机待验证 |
 | `--output PATH` | 指定模块输出路径 | 默认 `artifacts/Z62APP.BIN` |
 | `--force` | 替换旧模块及其配置清单 | 切换配置时显式指定 |
 
